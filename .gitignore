@@ -1,0 +1,22 @@
+# 공통
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+*.local
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# DB 인코딩 변환 전 원본 백업 (로컬 보관용)
+DB/*.bak.csv
+
+# 아이콘 원본 (FE/public/house.png로 사용)
+/house.png

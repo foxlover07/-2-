@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-navy: #14213d;
+  --color-blue: #2f5bea;
+  --color-blue-50: #eef3ff;
+  --color-text: #1a1f2c;
+  --color-muted: #6b7280;
+  --color-border: #e5e8ee;
+  --color-bg: #f7f8fa;
+  --color-green: #0f9d6b;
+  --color-green-50: #e7f7f0;
+
+  --font-sans: 'Noto Sans KR', system-ui, sans-serif;
+
+  --radius-card: 16px;
+  --radius-control: 12px;
+}
+
+@layer base {
+  body {
+    @apply bg-bg font-sans text-text antialiased;
+  }
+}
