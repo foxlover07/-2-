@@ -18,6 +18,8 @@ LLM 없이 순수 계산만 한다. 입력은 매물 목록과 FE 의 Profile �
   - 0~1 맞추는 범위: 점수를 매길 수 있는 매물 전체 (예산 탈락 전). 예산을 바꿔도 점수가 변하지 않는다.
   - 모든 매물의 값이 같으면 그 기준은 전부 1.0
   - 방문 강의동이 하나도 없으면 이동 기준을 끄고 주거비만으로 계산한다 (notes 에 남긴다)
+  - 어떤 매물에도 없는 강의동 이름은 버린다 (notes 에 남긴다)
+  - penalty 모드에서는 점수가 음수가 될 수 있다 (순위 비교용 값이라 그대로 둔다)
 """
 
 import math
@@ -185,6 +187,7 @@ def recommend(
     if top_n < 1:
         raise ValueError("top_n 은 1 이상이어야 합니다.")
 
+    properties = list(properties)
     notes: list[str] = []
     excluded: list[ExcludedProperty] = []
 
@@ -192,22 +195,37 @@ def recommend(
         profile.cost_importance, profile.walk_importance
     )
 
+    # 어떤 매물에도 없는 강의동 이름(오타 등)은 버린다. 그대로 두면 모든 매물이 탈락한다.
+    known_spots = {name for p in properties for name, _ in _spots(p)}
+    visits = {name: count for name, count in profile.visits.items() if count > 0 and name in known_spots}
+    unknown = sorted(name for name, count in profile.visits.items() if count > 0 and name not in known_spots)
+    if unknown:
+        notes.append(f"데이터에 없는 강의동은 제외했습니다: {', '.join(unknown)}")
+
     # 방문 강의동이 없으면 이동 기준을 끈다.
-    walk_enabled = any(count > 0 for count in profile.visits.values())
+    walk_enabled = bool(visits)
     if not walk_enabled:
         notes.append("방문 강의동이 없어 이동시간 기준을 빼고 주거비만으로 계산했습니다.")
-    applied = Weights(cost=base.cost, walk=base.walk if walk_enabled else 0.0).normalized()
+    cost_w = base.cost
+    walk_w = base.walk if walk_enabled else 0.0
+    if cost_w + walk_w <= 0:
+        notes.append("쓸 수 있는 가중치가 없어 주거비만으로 계산했습니다.")
+        cost_w = 1.0
+    applied = Weights(cost=cost_w, walk=walk_w).normalized()
 
     # 1) 점수를 매길 수 있는 매물만 고른다 (값이 없으면 계산하지 않고 제외).
     costs: dict[str, float] = {}
     walks: dict[str, float] = {}
     by_id: dict[str, Property] = {}
     for p in properties:
+        if p.property_id in by_id:
+            excluded.append(ExcludedProperty(property_id=p.property_id, reason="매물 ID 중복"))
+            continue
         cost = monthly_fixed_cost(p)
         if cost is None:
             excluded.append(ExcludedProperty(property_id=p.property_id, reason="월세 또는 관리비 정보 없음"))
             continue
-        walk = weighted_avg_walk(p, profile.visits) if walk_enabled else None
+        walk = weighted_avg_walk(p, visits) if walk_enabled else None
         if walk_enabled and walk is None:
             excluded.append(
                 ExcludedProperty(property_id=p.property_id, reason="방문 강의동의 도보시간 정보 없음")

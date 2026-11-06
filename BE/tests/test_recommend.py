@@ -223,6 +223,33 @@ def test_empty_properties_returns_empty_result():
     assert result.ranked == []
 
 
+def test_unknown_spot_is_dropped_not_wiping_everything():
+    # 오타 강의동 하나 때문에 매물 전체가 탈락하면 안 된다.
+    with_typo = recommend(PROPS, Profile(visits={**VISITS, "공대": 1}))
+    plain = recommend(PROPS, Profile(visits=VISITS))
+    assert ids(with_typo.ranked) == ids(plain.ranked)
+    assert any("공대" in n for n in with_typo.notes)
+
+
+def test_only_unknown_spots_falls_back_to_cost_only():
+    result = recommend(PROPS, Profile(visits={"공대": 3}))
+    assert result.weights.walk == 0.0
+    assert ids(result.top) == ["P005", "P003", "P006"]
+
+
+def test_zero_cost_weight_without_walk_falls_back_instead_of_crashing():
+    result = recommend(PROPS, Profile(), weights=Weights(cost=0, walk=1))
+    assert result.weights.cost == pytest.approx(1.0)
+    assert len(result.top) == 3
+    assert any("가중치" in n for n in result.notes)
+
+
+def test_duplicate_ids_are_excluded_with_reason():
+    result = recommend([BY_ID["P001"], BY_ID["P001"]], Profile(visits=VISITS))
+    assert ids(result.ranked) == ["P001"]
+    assert result.excluded[0].reason == "매물 ID 중복"
+
+
 def test_top_n_must_be_positive():
     with pytest.raises(ValueError):
         recommend(PROPS, Profile(visits=VISITS), top_n=0)
