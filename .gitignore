@@ -7,6 +7,11 @@ dist/
 !.env.example
 *.local
 
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+
 # OS / 에디터
 .DS_Store
 Thumbs.db
