@@ -46,3 +46,6 @@ DB/experimental/
 
 # 참고 논문 PDF (로컬 보관)
 /*.pdf
+
+# 디자인 시안 등 압축 파일 (로컬 보관)
+*.zip

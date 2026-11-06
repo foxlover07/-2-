@@ -1,44 +1,12 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { EMPTY_PROFILE, parseStoredProfile, type Profile } from '../utils/profile'
 import { readStorage, writeStorage } from '../utils/storage'
-import type { SpotVisits } from '../utils/walk'
+
+export type { ClassSlot, FrequentPlace, Profile } from '../utils/profile'
 
 const STORAGE_KEY = 'home-poc:profile'
 
-export const IMPORTANCE_MIN = 1
-export const IMPORTANCE_MAX = 5
-
-export interface Profile {
-  // 선택한 강의동만 키로 들어간다.
-  visits: SpotVisits
-  budgetManwon: number | null
-  costImportance: number
-  walkImportance: number
-}
-
-export const EMPTY_PROFILE: Profile = {
-  visits: {},
-  budgetManwon: null,
-  costImportance: 3,
-  walkImportance: 3,
-}
-
-function isImportance(v: unknown): v is number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= IMPORTANCE_MIN && v <= IMPORTANCE_MAX
-}
-
-function isProfile(value: unknown): value is Profile {
-  if (typeof value !== 'object' || value === null) return false
-  const p = value as Profile
-  return (
-    typeof p.visits === 'object' &&
-    p.visits !== null &&
-    !Array.isArray(p.visits) &&
-    Object.values(p.visits).every((n) => typeof n === 'number' && Number.isInteger(n) && n >= 0) &&
-    (p.budgetManwon === null || (typeof p.budgetManwon === 'number' && p.budgetManwon >= 0)) &&
-    isImportance(p.costImportance) &&
-    isImportance(p.walkImportance)
-  )
-}
+const anyValue = (v: unknown): v is unknown => v !== undefined
 
 interface ProfileContextValue {
   profile: Profile
@@ -50,7 +18,8 @@ interface ProfileContextValue {
 const ProfileContext = createContext<ProfileContextValue | null>(null)
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
-  const [saved, setSaved] = useState<Profile | null>(() => readStorage(STORAGE_KEY, isProfile))
+  // 예전 형식 저장값도 읽는다 (새 필드는 기본값).
+  const [saved, setSaved] = useState<Profile | null>(() => parseStoredProfile(readStorage(STORAGE_KEY, anyValue)))
 
   useEffect(() => {
     if (saved) writeStorage(STORAGE_KEY, saved)

@@ -1,43 +1,30 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { Building2, Check, GraduationCap, RotateCcw, Scale, Wallet } from 'lucide-react'
-import { Button, Card, Chip, EmptyState, Input, Slider } from '../components/common'
+import { Check, Save } from 'lucide-react'
+import { Button } from '../components/common'
 import { PageContainer } from '../components/layout/PageContainer'
-import { Stepper } from '../components/profile/Stepper'
+import { PlacesSection } from '../components/profile/PlacesSection'
+import { SectionCard } from '../components/profile/SectionCard'
+import { SimpleSettingsSection } from '../components/profile/SimpleSettingsSection'
+import { TimetableSection } from '../components/profile/TimetableSection'
+import { WeightsSection } from '../components/profile/WeightsSection'
+import { checkForm, formSignature, toForm, toProfile, type FormState } from '../components/profile/profileForm'
 import { getUniversityLabel } from '../constants/universities'
-import { IMPORTANCE_MAX, IMPORTANCE_MIN, useProfile, type Profile } from '../contexts/ProfileContext'
+import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { getProperties } from '../services/propertyService'
 import type { Property } from '../types/property'
-import { getFilterBounds } from '../utils/filter'
 import { getSpotNames } from '../utils/walk'
 
-// 하루 2번 × 7일
-const VISITS_MIN = 1
-const VISITS_MAX = 14
-const IMPORTANCE_LABEL = ['', '매우 낮음', '낮음', '보통', '높음', '매우 높음']
+// 예산 슬라이더 범위 (Figma 03 v2). 입력칸에는 이 범위 밖 값도 넣을 수 있다.
+const BUDGET_SLIDER_MIN = 30
+const BUDGET_SLIDER_MAX = 150
 
-interface FormState {
-  visits: Profile['visits']
-  budgetText: string
-  costImportance: number
-  walkImportance: number
-}
-
-function toForm(p: Profile): FormState {
-  return {
-    visits: p.visits,
-    budgetText: p.budgetManwon === null ? '' : String(p.budgetManwon),
-    costImportance: p.costImportance,
-    walkImportance: p.walkImportance,
-  }
-}
-
-// 빈 칸은 "예산 미설정"(null). 숫자가 아니거나 음수면 undefined(오류).
-function parseBudget(text: string): number | null | undefined {
-  if (text.trim() === '') return null
-  const n = Number(text)
-  return Number.isFinite(n) && n >= 0 ? n : undefined
+function formatSavedAt(iso: string | null): string {
+  if (!iso) return '저장 기록 없음'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '저장 기록 없음'
+  return d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 export function ProfilePage() {
@@ -64,14 +51,14 @@ export function ProfilePage() {
   }, [justSaved])
 
   const universityProperties = useMemo(() => (all ?? []).filter((p) => p.university === university), [all, university])
+  // 건물 선택지는 하드코딩하지 않고 매물 데이터의 강의동 이름에서 뽑는다.
   const spotNames = useMemo(() => getSpotNames(universityProperties), [universityProperties])
-  const costRange = useMemo(() => getFilterBounds(universityProperties).cost, [universityProperties])
 
-  const budget = parseBudget(form.budgetText)
-  const budgetError = budget === undefined ? '0 이상의 숫자를 입력해 주세요.' : null
-  const dirty = !isSaved || JSON.stringify(form) !== JSON.stringify(toForm(profile))
-  const selectedCount = Object.keys(form.visits).length
+  const check = checkForm(form, spotNames)
+  const savedForm = useMemo(() => toForm(profile), [profile])
+  const dirty = !isSaved || formSignature(form) !== formSignature(savedForm)
 
+  const patch = (p: Partial<FormState>) => setForm((f) => ({ ...f, ...p }))
   const setVisits = (name: string, count: number | null) =>
     setForm((f) => {
       const visits = { ...f.visits }
@@ -81,167 +68,119 @@ export function ProfilePage() {
     })
 
   const handleSave = () => {
-    if (budget === undefined) return
-    // 지금 대학의 강의동만 남긴다. 다른 강의동이 섞이면 가중 평균을 계산할 수 없다.
-    // 강의동 데이터가 없는 대학에서 저장할 때는 기존 방문 기록을 그대로 둔다.
-    const visits =
-      spotNames.length === 0
-        ? form.visits
-        : Object.fromEntries(Object.entries(form.visits).filter(([name]) => spotNames.includes(name)))
-    const next: Profile = {
-      visits,
-      budgetManwon: budget,
-      costImportance: form.costImportance,
-      walkImportance: form.walkImportance,
-    }
+    if (!check.canSave || check.budget === undefined) return
+    const next = { ...toProfile(form, check.budget, spotNames), savedAt: new Date().toISOString() }
     saveProfile(next)
     setForm(toForm(next))
     setJustSaved(true)
   }
 
+  const sliderBudget = Math.min(BUDGET_SLIDER_MAX, Math.max(BUDGET_SLIDER_MIN, check.budget ?? BUDGET_SLIDER_MIN))
+
   return (
-    <PageContainer
-      title="생활 프로필"
-      description="자주 가는 강의동과 예산을 알려 주시면 도보시간과 예산 비교에 반영합니다."
-      narrow
-    >
-      <div className="flex flex-col gap-5">
-        <Card>
-          <div className="flex items-center gap-2">
-            <GraduationCap className="size-5 text-blue" aria-hidden />
-            <h2 className="text-base font-bold text-navy">자주 가는 강의동</h2>
-          </div>
-          <p className="mt-1 text-sm text-muted">
-            {getUniversityLabel(university)} 강의동을 고르고 일주일에 몇 번 가는지 입력해 주세요.
-          </p>
-
-          {all === null ? (
-            <p className="py-8 text-center text-sm text-muted">강의동 정보를 불러오는 중입니다…</p>
-          ) : spotNames.length === 0 ? (
-            <EmptyState
-              icon={Building2}
-              title={`${getUniversityLabel(university)} 강의동 정보가 아직 없습니다`}
-              description="현재는 이화여대 강의동만 제공합니다."
-            />
-          ) : (
-            <ul className="mt-4 divide-y divide-border">
-              {spotNames.map((name) => {
-                const count = form.visits[name]
-                const selected = count !== undefined
-                return (
-                  <li key={name} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <Chip selected={selected} onClick={() => setVisits(name, selected ? null : VISITS_MIN)}>
-                      {selected && <Check className="size-3.5" aria-hidden />}
-                      {name}
-                    </Chip>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted">주</span>
-                      <Stepper
-                        label={`${name} 주간 방문 횟수`}
-                        value={count ?? 0}
-                        min={VISITS_MIN}
-                        max={VISITS_MAX}
-                        unit="회"
-                        disabled={!selected}
-                        onChange={(v) => setVisits(name, v)}
-                      />
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          {spotNames.length > 0 && selectedCount === 0 && (
-            <p className="mt-2 text-xs text-muted">강의동을 하나 이상 선택해야 가중 평균 도보시간을 계산할 수 있습니다.</p>
-          )}
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-2">
-            <Wallet className="size-5 text-blue" aria-hidden />
-            <h2 className="text-base font-bold text-navy">월 예산 상한</h2>
-          </div>
-          <p className="mt-1 text-sm text-muted">월세와 관리비를 합한 월 고정 주거비 기준입니다.</p>
-          <Input
-            className="mt-4 max-w-xs"
-            aria-label="월 예산 상한"
-            type="number"
-            inputMode="decimal"
-            min={0}
-            placeholder="예산 미설정"
-            suffix="만원"
-            value={form.budgetText}
-            onChange={(e) => setForm((f) => ({ ...f, budgetText: e.target.value }))}
-            aria-invalid={budgetError !== null}
-            hint={
-              budgetError ??
-              (costRange ? `현재 매물의 월 고정비는 ${costRange.min}~${costRange.max}만원입니다. 비워 두면 예산을 비교하지 않습니다.` : '비워 두면 예산을 비교하지 않습니다.')
-            }
-          />
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-2">
-            <Scale className="size-5 text-blue" aria-hidden />
-            <h2 className="text-base font-bold text-navy">중요도</h2>
-          </div>
-          <p className="mt-1 text-sm text-muted">AI 추천에서 주거비와 이동시간 중 무엇을 더 중요하게 볼지 정합니다.</p>
-          <div className="mt-5 flex flex-col gap-6">
-            <Slider
-              label="주거비 중요도"
-              min={IMPORTANCE_MIN}
-              max={IMPORTANCE_MAX}
-              value={form.costImportance}
-              onChange={(v) => setForm((f) => ({ ...f, costImportance: v }))}
-              formatValue={(v) => IMPORTANCE_LABEL[v]}
-              minLabel="낮음"
-              maxLabel="높음"
-            />
-            <Slider
-              label="이동시간 중요도"
-              min={IMPORTANCE_MIN}
-              max={IMPORTANCE_MAX}
-              value={form.walkImportance}
-              onChange={(v) => setForm((f) => ({ ...f, walkImportance: v }))}
-              formatValue={(v) => IMPORTANCE_LABEL[v]}
-              minLabel="낮음"
-              maxLabel="높음"
-            />
-          </div>
-        </Card>
+    <PageContainer narrow>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-bold text-navy md:text-2xl">생활 프로필</h1>
+          <p className="mt-1.5 text-sm text-muted">시간표와 생활 패턴을 입력하면 조건 기반 추천에 반영됩니다.</p>
+        </div>
+        <p className="text-xs text-muted">마지막 저장: {formatSavedAt(profile.savedAt)}</p>
       </div>
 
-      {/* 하단 고정 저장 바에 마지막 카드가 가리지 않도록 */}
-      <div className="h-16" aria-hidden />
+      <div className="flex flex-col gap-5">
+        <TimetableSection
+          rows={form.timetable}
+          onRowsChange={(timetable) => patch({ timetable })}
+          rowErrors={check.rowErrors}
+          buildings={spotNames}
+          gapBufferMin={form.gapBufferMin}
+          onGapBufferChange={(gapBufferMin) => patch({ gapBufferMin })}
+        />
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3 md:px-6">
-          <p role="status" className="text-sm text-muted">
-            {justSaved ? (
-              <span className="flex items-center gap-1 font-medium text-green">
-                <Check className="size-4" aria-hidden />
-                저장되었습니다.{' '}
-                <Link to="/" className="underline">
-                  매물 보러 가기
-                </Link>
-              </span>
-            ) : dirty ? (
-              isSaved ? '저장하지 않은 변경 사항이 있습니다.' : '아직 저장된 프로필이 없습니다.'
-            ) : (
-              '저장된 프로필입니다.'
-            )}
-          </p>
-          <div className="flex shrink-0 gap-2">
-            {isSaved && dirty && (
-              <Button variant="ghost" onClick={() => setForm(toForm(profile))}>
-                <RotateCcw className="size-4" aria-hidden />
-                되돌리기
-              </Button>
-            )}
-            <Button onClick={handleSave} disabled={budgetError !== null || !dirty}>
-              {isSaved ? '수정 저장' : '저장'}
-            </Button>
+        <PlacesSection rows={form.places} onRowsChange={(places) => patch({ places })} />
+
+        <SectionCard step={3} title="월 주거비 예산 상한" description="월 고정 주거비(월세 + 관리비) 기준">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="flex h-12 w-44 items-center rounded-control border border-border bg-white px-3 focus-within:border-blue focus-within:ring-1 focus-within:ring-blue">
+              <input
+                aria-label="월 예산 상한"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                placeholder="예산 미설정"
+                value={form.budgetText}
+                aria-invalid={check.budgetError !== null}
+                onChange={(e) => patch({ budgetText: e.target.value })}
+                className="w-full min-w-0 bg-transparent text-base font-bold text-text outline-none placeholder:text-sm placeholder:font-normal placeholder:text-muted"
+              />
+              <span className="ml-2 shrink-0 text-sm text-muted">만원 / 월</span>
+            </div>
+            <div className="min-w-48 flex-1">
+              <input
+                type="range"
+                aria-label="월 예산 상한 슬라이더"
+                min={BUDGET_SLIDER_MIN}
+                max={BUDGET_SLIDER_MAX}
+                value={sliderBudget}
+                onChange={(e) => patch({ budgetText: e.target.value })}
+                className="h-2 w-full cursor-pointer accent-blue"
+              />
+              <div className="mt-1 flex justify-between text-xs text-muted">
+                <span>{BUDGET_SLIDER_MIN}만원</span>
+                <span>{BUDGET_SLIDER_MAX}만원</span>
+              </div>
+            </div>
           </div>
+          <p className={check.budgetError ? 'mt-3 text-xs text-red' : 'mt-3 text-xs text-muted'}>
+            {check.budgetError ?? "넘는 매물은 추천 결과에 '예산 초과' 배지로 표시됩니다. 비워 두면 예산을 보지 않습니다."}
+          </p>
+        </SectionCard>
+
+        <WeightsSection
+          weights={form.weightsPercent}
+          sum={check.weightsSum}
+          onChange={(weightsPercent) => patch({ weightsPercent })}
+        />
+
+        <SimpleSettingsSection
+          loading={all === null}
+          universityLabel={getUniversityLabel(university)}
+          spotNames={spotNames}
+          visits={form.visits}
+          onVisitsChange={setVisits}
+          costImportance={form.costImportance}
+          walkImportance={form.walkImportance}
+          onCostImportanceChange={(costImportance) => patch({ costImportance })}
+          onWalkImportanceChange={(walkImportance) => patch({ walkImportance })}
+        />
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <p role="status" className="text-sm text-muted">
+          {justSaved ? (
+            <span className="flex items-center gap-1 font-medium text-green">
+              <Check className="size-4" aria-hidden />
+              저장되었습니다.{' '}
+              <Link to="/compare" className="underline">
+                추천 보러 가기
+              </Link>
+            </span>
+          ) : !check.canSave ? (
+            '입력 오류를 고쳐야 저장할 수 있습니다.'
+          ) : dirty ? (
+            isSaved ? '저장하지 않은 변경 사항이 있습니다.' : '아직 저장된 프로필이 없습니다.'
+          ) : (
+            '저장된 프로필입니다.'
+          )}
+        </p>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="secondary" onClick={() => setForm(savedForm)} disabled={!dirty || !isSaved}>
+            취소
+          </Button>
+          <Button onClick={handleSave} disabled={!check.canSave || !dirty}>
+            <Save className="size-4" aria-hidden />
+            프로필 저장
+          </Button>
         </div>
       </div>
     </PageContainer>

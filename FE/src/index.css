@@ -10,6 +10,12 @@
   --color-bg: #f7f8fa;
   --color-green: #0f9d6b;
   --color-green-50: #e7f7f0;
+  /* 안내·주의 (데이터 준비 중, notes) */
+  --color-amber: #b45309;
+  --color-amber-50: #fff7e6;
+  /* 예산 초과 등 경고 */
+  --color-red: #d92d20;
+  --color-red-50: #fdecea;
 
   --font-sans: 'Noto Sans KR', system-ui, sans-serif;
 
