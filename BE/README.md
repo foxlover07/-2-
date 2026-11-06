@@ -79,8 +79,35 @@ BE/
 │   ├── main.py              # FastAPI 앱, CORS, /health
 │   ├── models.py            # Pydantic Property 모델 (FE/src/types/property.ts 와 1:1)
 │   ├── data.py              # CSV 로딩 (빈 값 → null, 숫자 열 → 숫자)
+│   ├── recommend.py         # 추천 점수 (주거비·도보시간 가중합)
+│   ├── criteria.py          # 학생 맞춤 추천 근거 + 다기준 점수 (docs/student-criteria.md)
 │   └── routers/
 │       └── properties.py    # GET /properties, GET /properties/{property_id}
 └── tests/
-    └── test_properties.py
+    ├── test_properties.py
+    ├── test_recommend.py
+    └── test_criteria.py
 ```
+
+## 학생 맞춤 추천 근거 (`app/criteria.py`)
+
+노션 "학생 맞춤 추천 근거" 표의 MVP 근거를 계산한다. 근거 표는 `docs/student-criteria.md`.
+
+| 기준 키 | 근거 | 방향 | 입력 |
+| --- | --- | --- | --- |
+| `monthly_cost` | 월 고정 주거비 | 낮을수록 | CSV |
+| `weekly_commute` | 주간 총 통학 시간 | 낮을수록 | 시간표 (Vision LLM 인식 예정) |
+| `gap_home` | 공강 귀가 가능 횟수 | 높을수록 | 시간표 |
+| `frequent_place` | 자주 가는 곳 이동시간 (알바 포함) | 낮을수록 | 선택한 지역 + 이동시간 |
+| `late_return` | 심야 귀가 시간 | 낮을수록 | 자주 가는 곳의 끝나는 시각 |
+| `preference_match` | 선호 적합도 (콘텐츠 기반) | 높을수록 | 매물 특성 + 선호 |
+
+- 입력하지 않은 정보의 기준은 자동으로 꺼지고 `notes` 에 남는다.
+- **반영 비율:** 사용자가 화면 슬라이더로 기준별 비율(%)을 정한다 (`Lifestyle.weights_percent`, 합 100).
+  - 0% 인 기준은 계산하지 않는다.
+  - 입력 정보가 없어 계산 못 한 기준의 비율은 나머지 기준에 비율대로 나눈다 (`notes` 에 남김).
+  - 비율을 비워 두면 계산 가능한 기준에 똑같이 나눈다.
+- **자주 가는 지역:** 화면에서 `EWHA_AREAS`(이대역, 신촌역, 홍대입구역 등) 중에 고르고 용도·주간 횟수·끝나는 시각을 입력한다.
+- 결과의 `strengths` / `weaknesses` 는 추천 근거 설명(LLM)에 넘길 데이터다.
+- 매물 → 지역 이동시간은 `merge_travel_times()` 로 넣는다 (지금은 수동 입력, 이후 Route Tool 로 미리 계산).
+- 매물 특성(`PropertyFeatures`)과 귀갓길 안전 데이터는 아직 없다. 공공데이터 정제(CUBIG) 뒤 채운다.
