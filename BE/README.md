@@ -12,9 +12,16 @@ uv sync
 
 환경 변수가 필요하면 `.env.example`을 복사해 `.env`로 만든다 (비워 두면 기본값 사용).
 
-```bash
+```bashhttps://github.com/foxlover07/-2-/blob/feat/be-skeleton/BE/README.md
 cp .env.example .env
 ```
+
+OpenRouter API 키 받는 법
+
+1. 오픈라우터 가입
+2. 대쉬보드에서 API keys 클릭
+3. 새 키 만들어서 생성된 키 바로 복사(키는 처음에 만들 때만 전부 보여준다고 합니다)
+4. 저는 모델에 google/gemma-4-26b-a4b-it:free 썼습니다
 
 | 키 | 기본값 | 설명 |
 | --- | --- | --- |
