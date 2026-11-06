@@ -92,6 +92,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "openai" },
     { name = "python-dotenv" },
     { name = "uvicorn" },
@@ -106,6 +107,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.162.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "openai", specifier = ">=3.46.0" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "uvicorn", specifier = ">=0.54.0" },
