@@ -54,7 +54,27 @@ def _v1_ewha6() -> list[tuple[str, list[str]]]:
     return queries
 
 
-PLANS = {"v0_pilot": _v0_pilot, "v1_ewha6": _v1_ewha6}
+def _v2_zigbang_ewha9() -> list[tuple[str, list[str]]]:
+    """직방만 재수집 (2026-11-08): 서대문구 6개 동 + 이대 옆 마포구 3개 동, 동마다 끝까지 이어 받는다.
+
+    직방만 목록에 지번 주소를 줘서 Kakao 주소 검색·도보 경로를 붙일 수 있다 (네이버·다방·당근은 동 이름까지).
+    페이지는 has_more/next 로 이어 받고, 동마다 최대 MAX_PAGES 페이지까지만 받는다.
+    """
+    regions = [f"서대문구 {d}" for d in EWHA_DONGS] + [f"마포구 {d}" for d in MAPO_DONGS]
+    return [
+        (f"zigbang:{r.split()[-1]}", ["zigbang", "search", "listings", "room", r, "--trade", "월세", "--limit", "50"])
+        for r in regions
+    ]
+
+
+# 이화여대 서쪽·남쪽으로 붙은 마포구 법정동 (이대역·신촌역 생활권)
+MAPO_DONGS = ["노고산동", "염리동", "대흥동"]
+
+# 이어 받기(--next) 할 계획과 동마다 최대 페이지 수
+PAGINATED_PLANS = {"v2_zigbang_ewha9"}
+MAX_PAGES = 4
+
+PLANS = {"v0_pilot": _v0_pilot, "v1_ewha6": _v1_ewha6, "v2_zigbang_ewha9": _v2_zigbang_ewha9}
 
 
 def _now() -> str:
@@ -76,8 +96,12 @@ def collect(plan: str, only: list[str] | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=False)
 
     runs = []
-    for key, args in queries:
-        args = [*args, "--compact"]
+    todo = [(key, args, 1) for key, args in queries]
+    while todo:
+        key, base_args, page = todo.pop(0)
+        args = [*base_args, "--compact"]
+        if page > 1:
+            key = f"{key}#p{page}"
         requested_at = _now()
         proc = subprocess.run([exe, *args], capture_output=True)
         stdout_file = f"{_safe(key)}.stdout.json"
@@ -96,6 +120,17 @@ def collect(plan: str, only: list[str] | None = None) -> Path:
             "stderr_file": stderr_file,
         })
         print(f"{key}: exit={proc.returncode} stdout={len(proc.stdout)}B stderr={len(proc.stderr)}B", flush=True)
+
+        # 이어 받기: 같은 명령·조건에 --next 만 붙인다 (jibsa 가이드). 실패하면 그 동은 거기서 멈춘다.
+        if plan in PAGINATED_PLANS and proc.returncode == 0 and page < MAX_PAGES:
+            try:
+                data = json.loads(proc.stdout)
+            except ValueError:
+                data = {}
+            if data.get("has_more") and data.get("next"):
+                first_key = key.split("#")[0]
+                no_next = base_args[: base_args.index("--next")] if "--next" in base_args else base_args
+                todo.insert(0, (first_key, [*no_next, "--next", str(data["next"])], page + 1))
 
     manifest = {
         "tool": "jibsa",
