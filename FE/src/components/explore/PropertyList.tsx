@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { SearchX } from 'lucide-react'
 import { Button, EmptyState } from '../common'
 import { useCompare } from '../../contexts/CompareContext'
 import type { Property } from '../../types/property'
 import { SORT_OPTIONS, type SortKey } from '../../utils/filter'
 import type { LocationStatus } from '../map/MapView'
+import { duplicateCounts } from '../../utils/duplicates'
 import { PropertyCard } from './PropertyCard'
 
 interface PropertyListProps {
@@ -28,6 +29,8 @@ export function PropertyList({
 }: PropertyListProps) {
   const compare = useCompare()
   const cardRefs = useRef(new Map<string, HTMLDivElement>())
+  // 같은 집일 수 있는 매물 (주소·보증금·월세·관리비·면적이 같음)
+  const dupes = useMemo(() => duplicateCounts(properties), [properties])
 
   // 지도에서 선택하면 목록의 해당 카드가 보이도록 스크롤한다.
   useEffect(() => {
@@ -78,6 +81,7 @@ export function PropertyList({
             locationFailed={locationStatus[p.property_id] === 'failed'}
             compareChecked={compare.has(p.property_id)}
             compareDisabled={!compare.has(p.property_id) && compare.isFull}
+            duplicateCount={dupes.get(p.property_id)}
             onSelect={() => onSelect(p.property_id)}
             onToggleCompare={() => compare.toggle(p.property_id)}
           />

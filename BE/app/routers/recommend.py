@@ -11,6 +11,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.buildings import aliases_for
 from app.categories import CategoryMeta, RecommendV3Request, RecommendV3Result, category_catalog, recommend_v3
 from app.data import load_properties, load_travel_times
 from app.scoring import RecommendRequest, RecommendResult, UnknownBuildingError, recommend
@@ -36,6 +37,7 @@ class BuildingCoverage(BaseModel):
     name: str
     covered: int  # 도보시간이 있는 매물 수
     total: int
+    aliases: list[str]  # 이 건물로 읽는 줄임말 (초안, 팀 확인 필요)
 
 
 @router.get("/buildings", response_model=list[BuildingCoverage])
@@ -47,7 +49,7 @@ def list_buildings() -> list[BuildingCoverage]:
         for name in row:
             counts[name] = counts.get(name, 0) + 1
     return [
-        BuildingCoverage(name=n, covered=c, total=len(props))
+        BuildingCoverage(name=n, covered=c, total=len(props), aliases=aliases_for(n))
         for n, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
 

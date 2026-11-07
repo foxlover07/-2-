@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.buildings import resolve
 from app.models import Property
 from app.scoring import (
     ClassSlot,
@@ -290,13 +291,26 @@ def recommend_v3(
     travel = travel if travel is not None else travel_times_from_csv(properties)
     notes: list[str] = []
     excluded: list[Excluded] = []
-    dept = req.resolved_department_buildings()
     picked = list(req.categories)
     a = req.answers
 
-    needed = list(dict.fromkeys(dept + [s.building for s in req.timetable]))
+    # 건물 이름을 표준 이름으로 (줄임말·띄어쓰기·가운뎃점 차이, app.buildings)
+    known = sorted({name for row in travel.values() for name in row})
+    renamed: list[tuple[str, str]] = []
+
+    def std(name: str) -> str:
+        to = resolve(name, known) if known else name
+        if to != name and (name, to) not in renamed:
+            renamed.append((name, to))
+        return to
+
+    dept = [std(b) for b in req.resolved_department_buildings()]
+    timetable = [s.model_copy(update={"building": std(s.building)}) for s in req.timetable]
+    for frm, to in renamed:
+        notes.append(f"건물 '{frm}'을(를) '{to}'(으)로 읽었습니다.")
+
+    needed = list(dict.fromkeys(dept + [s.building for s in timetable]))
     if properties:
-        known = sorted({name for row in travel.values() for name in row})
         unknown = [b for b in needed if b not in known]
         if unknown:
             raise UnknownBuildingError(unknown, known)
@@ -321,11 +335,11 @@ def recommend_v3(
         values: dict[str, CategoryValue] = {}
         for k in picked:
             if k == "weekly_commute":
-                values[k] = weekly_commute(times, req.timetable, dept, a.weekly_commute_target_min, cfg, cat)
+                values[k] = weekly_commute(times, timetable, dept, a.weekly_commute_target_min, cfg, cat)
             elif k == "gap_home":
-                values[k] = gap_home(times, req.timetable, a.gap_rest_min)
+                values[k] = gap_home(times, timetable, a.gap_rest_min)
             elif k == "first_class":
-                values[k] = first_class(times, req.timetable, a.first_class_buffer_min, cfg, cat)
+                values[k] = first_class(times, timetable, a.first_class_buffer_min, cfg, cat)
             else:
                 values[k] = CategoryValue(None, None, {"reason": "데이터 준비 중"})
         rows.append((p, monthly_fixed_cost(p, cfg) or 0.0, values))
@@ -344,7 +358,7 @@ def recommend_v3(
                 reasons = {v[k].detail.get("reason") for _, _, v in rows if v[k].score is None}
                 why = f"{' / '.join(sorted(r for r in reasons if r))} 때문에"
             notes.append(f"'{info.label}'은(는) {why} 계산하지 못해 비중을 나머지 기준에 나눴습니다.")
-    if not req.timetable and "weekly_commute" in available:
+    if not timetable and "weekly_commute" in available:
         notes.append(f"시간표가 없어 주간 통학 시간은 학과 건물 × 주 {cat.fallback_days_per_week}일로 추정했습니다.")
     if rows and not available:
         notes.append("고른 기준을 하나도 계산할 수 없어 유지비 낮은 순으로만 정렬했습니다.")
@@ -392,7 +406,8 @@ def recommend_v3(
             "department_buildings_source": (
                 "입력" if req.department_buildings is not None else "학과 → 건물 예시표 (예시값, 팀 확인 필요)"
             ),
-            "timetable_days": len(_by_day(req.timetable)),
+            "timetable_days": len(_by_day(timetable)),
+            "renamed_buildings": [{"from": f, "to": t} for f, t in renamed],
             "mode": "도보 (Kakao 도보 경로, 강의동 4곳)",
             "category_config": asdict(cat),
         },

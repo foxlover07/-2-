@@ -8,6 +8,7 @@ import { recommend, toRecommendRequest } from '../../services/recommendService'
 import type { Property } from '../../types/property'
 import type { RankedProperty, RecommendResult } from '../../types/recommend'
 import { cx } from '../../utils/cx'
+import { DUPLICATE_HINT, duplicateCounts } from '../../utils/duplicates'
 import { formatArea, formatManwon } from '../../utils/format'
 import { missingForRecommend, type Profile } from '../../utils/profile'
 import { Badge, Card, EmptyState } from '../common'
@@ -106,6 +107,10 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
       (a, b) => a.upkeep_manwon - b.upkeep_manwon || (a.deposit_manwon ?? 0) - (b.deposit_manwon ?? 0) || a.rank - b.rank,
     )
   }, [result.ranked, sort])
+  const dupes = useMemo(
+    () => duplicateCounts(result.ranked.flatMap((r) => byId.get(r.property_id) ?? [])),
+    [result.ranked, byId],
+  )
 
   return (
     <div className="mt-4 flex flex-col gap-4">
@@ -184,7 +189,13 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
       ) : (
         <ol className="flex flex-col gap-2.5">
           {rows.slice(0, limit).map((r) => (
-            <ResultRow key={r.property_id} item={r} categories={result.categories} property={byId.get(r.property_id)} />
+            <ResultRow
+              key={r.property_id}
+              item={r}
+              categories={result.categories}
+              property={byId.get(r.property_id)}
+              duplicateCount={dupes.get(r.property_id) ?? 0}
+            />
           ))}
         </ol>
       )}
@@ -218,7 +229,17 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
   )
 }
 
-function ResultRow({ item, categories, property }: { item: RankedProperty; categories: string[]; property: Property | undefined }) {
+function ResultRow({
+  item,
+  categories,
+  property,
+  duplicateCount,
+}: {
+  item: RankedProperty
+  categories: string[]
+  property: Property | undefined
+  duplicateCount: number
+}) {
   const compare = useCompare()
   const inCompare = compare.has(item.property_id)
   const top = item.top
@@ -246,6 +267,11 @@ function ResultRow({ item, categories, property }: { item: RankedProperty; categ
             {property?.address ?? item.property_id}
           </Link>
           {property && <Badge tone="blue">{property.property_type}</Badge>}
+          {duplicateCount > 1 && (
+            <Badge tone="gray" title={DUPLICATE_HINT}>
+              같은 집일 수 있음 · {duplicateCount}건
+            </Badge>
+          )}
         </p>
         <p className="mt-0.5 text-xs text-muted">
           보증금 {formatManwon(item.deposit_manwon)} · 유지비 {formatManwon(item.upkeep_manwon)} / 월

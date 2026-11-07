@@ -205,3 +205,27 @@ def test_api_unknown_building_422():
 
 def test_weights_constant_from_config():
     assert (CONFIG.weight_rank1, CONFIG.weight_rank2, CONFIG.weight_rank3) == (0.55, 0.30, 0.15)
+
+
+# ---------------------------------------------------------------- 건물 이름 정규화·줄임말
+
+def test_building_resolve_normalizes_and_aliases():
+    from app.buildings import resolve
+
+    known = ["ECC", "이화·포스코관", "학관", "공과대학", "조형예술관 A동"]
+    assert resolve("이화포스코관", known) == "이화·포스코관"       # 가운뎃점 없음
+    assert resolve("이화여자대학교 학관", known) == "학관"          # 접두어
+    assert resolve("ecc", known) == "ECC"                            # 대소문자
+    assert resolve("조형예술관A동", known) == "조형예술관 A동"      # 띄어쓰기
+    assert resolve("포관", known) == "이화·포스코관"                 # 줄임말
+    assert resolve("공대", known) == "공과대학"
+    assert resolve("종과", known) == "종과"                          # 모호한 이름은 바꾸지 않음
+    assert resolve("생환관", known) == "생환관"                      # 표준 목록에 없는 건물로는 바꾸지 않음
+
+
+def test_recommend_reads_aliases_and_notes_them():
+    tt = [slot("월", "09:00", "10:15", "포관"), slot("수", "09:00", "10:15", "공대")]
+    r = recommend_v3(PROPS, req(timetable=tt))
+    assert r.ranked and r.weights["first_class"] > 0
+    assert any("'포관'을(를) '이화·포스코관'" in n for n in r.notes)
+    assert {"from": "공대", "to": "공과대학"} in r.assumptions["renamed_buildings"]
