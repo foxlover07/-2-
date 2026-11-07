@@ -37,3 +37,13 @@ def test_unknown_property_returns_404():
 def test_cors_allows_vite_dev_server():
     res = client.get("/health", headers={"Origin": "http://localhost:5173"})
     assert res.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_data_csv_path_relative_to_be_dir(monkeypatch):
+    """DATA_CSV_PATH 상대 경로는 실행 위치가 아니라 BE/ 기준이다."""
+    from app.config import BE_DIR
+    from app.data import DEFAULT_CSV_PATH, _csv_path
+
+    monkeypatch.setenv("DATA_CSV_PATH", "../DB/poc_ewha.csv")
+    monkeypatch.chdir(BE_DIR.parent)  # 다른 위치에서 실행해도
+    assert _csv_path() == DEFAULT_CSV_PATH.resolve()

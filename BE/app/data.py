@@ -1,8 +1,8 @@
 import csv
-import os
 from functools import lru_cache
 from pathlib import Path
 
+from app.config import BE_DIR, _read
 from app.models import Property
 
 # BE/app/data.py 기준 ../../DB/poc_ewha.csv  (= BE 폴더 기준 ../DB/poc_ewha.csv)
@@ -17,8 +17,12 @@ NUMERIC_FIELDS = {
 
 
 def _csv_path() -> Path:
-    override = os.getenv("DATA_CSV_PATH")
-    return Path(override) if override else DEFAULT_CSV_PATH
+    """DATA_CSV_PATH (프로세스 환경 → BE/.env → BE/.env.local 순, config 와 같은 규칙). 상대 경로는 BE/ 기준."""
+    override = _read("DATA_CSV_PATH")
+    if not override:
+        return DEFAULT_CSV_PATH
+    path = Path(override)
+    return path if path.is_absolute() else (BE_DIR / path).resolve()
 
 
 def _parse_row(row: dict[str, str]) -> Property:
