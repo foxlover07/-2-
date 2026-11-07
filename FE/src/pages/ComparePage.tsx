@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { Columns3, Plus, TriangleAlert } from 'lucide-react'
-import { Button, Card, EmptyState } from '../components/common'
+import { Button, Card, EmptyState, Loading } from '../components/common'
 import { CompareTable } from '../components/compare/CompareTable'
 import { RecommendPanel } from '../components/compare/RecommendPanel'
 import { PageContainer } from '../components/layout/PageContainer'
@@ -56,7 +56,7 @@ export function ComparePage() {
   if (all === null) {
     return (
       <PageContainer title="매물 비교">
-        <p className="py-12 text-center text-sm text-muted">매물 정보를 불러오는 중입니다…</p>
+        <Loading message="매물 정보를 불러오는 중입니다…" className="py-12" />
       </PageContainer>
     )
   }

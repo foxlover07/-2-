@@ -11,7 +11,7 @@ import { cx } from '../../utils/cx'
 import { DUPLICATE_HINT, duplicateCounts } from '../../utils/duplicates'
 import { formatArea, formatManwon } from '../../utils/format'
 import { missingForRecommend, type Profile } from '../../utils/profile'
-import { Badge, Card, EmptyState } from '../common'
+import { Badge, Card, EmptyState, Loading } from '../common'
 
 const PAGE = 20
 
@@ -88,7 +88,7 @@ export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelP
           description="FE/.env.local 에 VITE_API_URL(예: http://localhost:8000)을 설정하고 BE 서버를 실행해 주세요."
         />
       ) : state.status === 'loading' ? (
-        <p className="py-10 text-center text-sm text-muted">추천을 계산하는 중입니다…</p>
+        <Loading message="추천을 계산하는 중입니다…" className="py-10" />
       ) : state.status === 'error' ? (
         <EmptyState icon={TriangleAlert} title="추천을 불러오지 못했습니다" description={state.message} />
       ) : (

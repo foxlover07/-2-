@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Building2, TriangleAlert } from 'lucide-react'
-import { EmptyState } from '../components/common'
+import { EmptyState, Loading } from '../components/common'
 import { CompareBar } from '../components/explore/CompareBar'
 import { FilterPanel } from '../components/explore/FilterPanel'
 import { PropertyList } from '../components/explore/PropertyList'
@@ -87,7 +87,7 @@ function ExploreView({ university, load, properties, listPaddingBottom }: Explor
 
   let listContent: ReactNode
   if (load.kind === 'loading') {
-    listContent = <p className="p-6 text-center text-sm text-muted">매물을 불러오는 중입니다…</p>
+    listContent = <Loading message="매물을 불러오는 중입니다…" className="p-6" />
   } else if (load.kind === 'error') {
     listContent = <EmptyState icon={TriangleAlert} title="매물을 불러오지 못했습니다" description="잠시 후 다시 시도해 주세요." />
   } else if (properties.length === 0) {

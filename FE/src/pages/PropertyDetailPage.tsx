@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { ArrowLeft, Check, ExternalLink, Plus, SearchX, TriangleAlert } from 'lucide-react'
-import { Badge, Button, Card, EmptyState, PlaceholderImage } from '../components/common'
+import { Badge, Button, Card, EmptyState, Loading, PlaceholderImage } from '../components/common'
 import { WalkTimeCard } from '../components/detail/WalkTimeCard'
 import { PageContainer } from '../components/layout/PageContainer'
 import { MAX_COMPARE, useCompare } from '../contexts/CompareContext'
@@ -32,7 +32,7 @@ export function PropertyDetailPage() {
   if (load === null) {
     return (
       <PageContainer>
-        <p className="py-12 text-center text-sm text-muted">매물 정보를 불러오는 중입니다…</p>
+        <Loading message="매물 정보를 불러오는 중입니다…" className="py-12" />
       </PageContainer>
     )
   }
