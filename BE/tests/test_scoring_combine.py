@@ -147,14 +147,17 @@ def test_same_school_different_department_gets_different_top1():
     assert eng.ranked[0].property_id != ecc.ranked[0].property_id
 
 
-def test_over_budget_marked_and_cost_score_zero():
+def test_cost_score_relative_within_filtered_and_no_over_budget():
+    # 예산 75: 통과 매물 월 고정비 45(P005) ~ 75(P010). 예산은 점수에 쓰지 않는다
     result = recommend(PROPS, req(budget_manwon=75))
-    p007 = next(s for s in result.ranked if s.property_id == "P007")  # 82 (75 ~ 85 여유 구간)
-    assert p007.over_budget is True
-    assert p007.factor_scores["cost"] == 0
-    p005 = next(s for s in result.ranked if s.property_id == "P005")  # 45: 100 × (75 − 45) ÷ (75 × 0.8)
-    assert p005.over_budget is False
-    assert p005.factor_scores["cost"] == 50
+    by = {s.property_id: s for s in result.ranked}
+    assert "P007" not in by  # 82 > 75 → 필터에서 제외 (여유 구간 없음)
+    assert all(s.over_budget is False for s in result.ranked)
+    assert by["P005"].factor_scores["cost"] == 100
+    assert by["P010"].factor_scores["cost"] == 0
+    assert by["P003"].factor_scores["cost"] == pytest.approx(100 * (75 - 55) / 30, abs=0.01)
+    assert result.assumptions["cost_score"]["lowest_manwon"] == 45
+    assert result.assumptions["cost_score"]["highest_manwon"] == 75
 
 
 def test_result_limit_from_config():
@@ -198,7 +201,7 @@ def test_empty_properties_returns_empty_result():
 
 
 def test_too_few_candidates_note():
-    result = recommend(PROPS, req(budget_manwon=40))  # 45 ≤ 50 인 P005 만
+    result = recommend(PROPS, req(budget_manwon=45))  # 45 ≤ 45 인 P005 만
     assert ids(result.ranked) == ["P005"]
     assert any("1개뿐" in n for n in result.notes)
 
@@ -237,10 +240,10 @@ def test_assumptions_include_targets_weights_and_slack():
     assert a["weights_applied"]["transit"] == 0
     assert a["unavailable_factors"] == ["transit"]
     assert a["unavailable_travel_parts"] == ["frequent", "timetable"]
-    assert a["monthly_limit_manwon"] == 85
-    assert a["deposit_limit_manwon"] == 1200
+    assert a["monthly_limit_manwon"] == 75  # 여유 없음 (2026-11-08 결정)
+    assert a["deposit_limit_manwon"] == 1000
     assert a["grade"] == 2
-    assert a["config"]["monthly_budget_slack_manwon"] == 10
+    assert a["config"]["monthly_budget_slack_manwon"] == 0
     assert a["config"]["displayed_top_n"] == 3
 
 

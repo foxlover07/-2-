@@ -70,7 +70,7 @@ export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelP
         <Badge tone="gray">이대 매물 전체 대상</Badge>
       </div>
       <p className="mt-1 text-sm text-muted">
-        생활 프로필의 학과 건물·시간표·예산과 우선순위로 계산합니다. 각 요소는 매물별 절대 점수(0~100)입니다.
+        예산·보증금으로 먼저 거른 매물을 학과 건물·시간표와 우선순위로 점수화합니다. 이동시간은 매물별 절대 점수, 주거비는 남은 매물끼리 비교한 점수(가장 싼 곳 100점)입니다.
       </p>
 
       {!isSaved || missing.length > 0 ? (
@@ -305,6 +305,10 @@ function Assumptions({ assumptions: a }: { assumptions: Record<string, unknown> 
         : `${formatManwon(num('deposit_budget_manwon'))} · 제외 기준 ${formatManwon(num('deposit_limit_manwon'))} 초과`,
     ],
   ]
+  const cs = (typeof a.cost_score === 'object' && a.cost_score !== null ? a.cost_score : {}) as Record<string, unknown>
+  if (typeof cs.lowest_manwon === 'number' && typeof cs.highest_manwon === 'number') {
+    rows.push(['주거비 점수', `남은 매물 중 월 ${formatManwon(cs.lowest_manwon)} = 100점 ~ 월 ${formatManwon(cs.highest_manwon)} = 0점`])
+  }
   if (typeof a.grade_note === 'string') rows.push(['학년', a.grade_note])
 
   return (

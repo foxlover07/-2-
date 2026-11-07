@@ -77,8 +77,8 @@ def budget_exclusion_reason(
 ) -> str | None:
     """필수 조건(2장)에 걸리면 제외 사유, 통과하면 None.
 
-    - 월세 + 관리비 > 월 예산 + 여유(10만 원) → 제외
-    - 보증금 > 보증금 예산 × (1 + 여유 20%) → 제외 (보증금 예산을 입력한 경우만)
+    - 월세 + 관리비 > 월 예산 + 여유(지금 0) → 제외
+    - 보증금 > 보증금 예산 × (1 + 여유, 지금 0) → 제외 (보증금 예산을 입력한 경우만)
     """
     cost = monthly_fixed_cost(p, cfg)
     if cost is None:
@@ -101,15 +101,18 @@ def is_over_budget(monthly_cost: float, budget_manwon: float) -> bool:
     return monthly_cost > budget_manwon
 
 
-def cost_score(monthly_cost: float, budget_manwon: float, cfg: ScoringConfig = CONFIG) -> float:
-    """주거비 점수 = 100 × (예산 − 월 고정 주거비) ÷ (예산 × (1 − cost_full_score_ratio)) → 0~100 으로 자른다.
+def cost_score(monthly_cost: float, lowest: float, highest: float, cfg: ScoringConfig = CONFIG) -> float:
+    """주거비 점수 (2026-11-08 결정): 필터를 통과한 매물 안에서 상대 비교.
 
-    예산의 cost_full_score_ratio(지금 20%, 임시) 이하면 100점, 예산과 같으면 0점, 여유 구간(예산 초과)도 0점.
+    가장 싼 매물(lowest) = 100점, 가장 비싼 매물(highest) = 0점, 사이는 직선
+    (돈은 1만 원 차이가 어느 구간에서나 비슷하게 느껴지므로). 모두 같은 값이면 100점.
+    예산은 점수에 쓰지 않는다 (예산은 1차 필터로만).
     """
-    if budget_manwon <= 0:
-        raise ValueError(f"예산은 0보다 커야 합니다: {budget_manwon}")
-    span = budget_manwon * (1 - cfg.cost_full_score_ratio)
-    raw = cfg.score_max * (budget_manwon - monthly_cost) / span
+    if highest < lowest:
+        raise ValueError(f"최고가가 최저가보다 작습니다: lowest={lowest}, highest={highest}")
+    if highest == lowest:
+        return cfg.score_max
+    raw = cfg.score_max * (highest - monthly_cost) / (highest - lowest)
     return min(cfg.score_max, max(0.0, raw))
 
 
@@ -627,13 +630,19 @@ def recommend(
             factor_scores={
                 "travel": ts.score if ts else None,
                 "transit": None,  # 지하철역 도보시간 데이터가 생기면 10장 6단계에서 채운다
-                "cost": cost_score(cost, req.budget_manwon, cfg),
+                "cost": None,  # 필터 통과 매물이 다 모인 뒤 상대 비교로 채운다
             },
             travel=ts,
             monthly_cost=cost,
             deposit=p.deposit_manwon,
             over_budget=is_over_budget(cost, req.budget_manwon),
         ))
+
+    # 주거비 점수: 필터 통과 매물 안 상대 비교 (예산은 점수에 쓰지 않는다)
+    cost_range = (min(c.monthly_cost for c in candidates), max(c.monthly_cost for c in candidates)) if candidates else None
+    if cost_range:
+        for c in candidates:
+            c.factor_scores["cost"] = cost_score(c.monthly_cost, *cost_range, cfg)
 
     # 2) 가중치: 1·2순위 → 0.55/0.30/0.15, 계산 못 한 요소의 비중은 나머지에 나눈다
     order = full_priorities(req.priorities)
@@ -698,6 +707,11 @@ def recommend(
                 "timetable": {"T": req.desired_commute_min, "h": cfg.timetable_half_life_min, "mode": "도보"},
                 "frequent": {"T": cfg.frequent_target_min, "h": cfg.frequent_half_life_min},
                 "transit": {"T": cfg.subway_target_min, "h": cfg.subway_half_life_min},
+            },
+            "cost_score": {
+                "method": "필터 통과 매물 안 상대 비교 (가장 싼 매물 100점 ~ 가장 비싼 매물 0점)",
+                "lowest_manwon": cost_range[0] if cost_range else None,
+                "highest_manwon": cost_range[1] if cost_range else None,
             },
             "desired_commute_min": req.desired_commute_min,
             "department": req.department,

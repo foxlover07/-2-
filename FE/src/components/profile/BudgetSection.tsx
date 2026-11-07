@@ -1,4 +1,3 @@
-import { DEPOSIT_BUDGET_SLACK_PERCENT, MONTHLY_BUDGET_SLACK_MANWON } from '../../constants/recommend'
 import { SectionCard } from './SectionCard'
 
 // 예산 슬라이더 범위 (Figma 03 v2). 입력칸에는 이 범위 밖 값도 넣을 수 있다.
@@ -60,7 +59,7 @@ export function BudgetSection({
   const sliderBudget = Math.min(BUDGET_SLIDER_MAX, Math.max(BUDGET_SLIDER_MIN, budget ?? BUDGET_SLIDER_MIN))
 
   return (
-    <SectionCard step={step} title="예산" description="월 고정 주거비(월세 + 관리비) 기준 · 추천에는 월 예산이 필요합니다">
+    <SectionCard step={step} title="예산" description="조건에 맞는 매물을 먼저 거르는 데만 쓰고, 추천 점수에는 쓰지 않습니다">
       <p className="mb-2 text-sm font-medium text-text">월 주거비 예산 (필수)</p>
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <ManwonInput
@@ -89,7 +88,7 @@ export function BudgetSection({
       </div>
       <p className={budgetError ? 'mt-2 text-xs text-red' : 'mt-2 text-xs text-muted'}>
         {budgetError ??
-          `예산 + ${MONTHLY_BUDGET_SLACK_MANWON}만원까지는 '예산 초과'로 표시하고(주거비 점수 0점), 그보다 비싸면 추천에서 제외합니다. 관리비 정보가 없는 매물은 지금은 제외됩니다.`}
+          '월 고정 주거비(월세 + 관리비)가 예산을 넘는 매물은 추천에서 제외합니다. 관리비 정보가 없는 매물도 지금은 제외됩니다.'}
       </p>
 
       <p className="mt-6 mb-2 text-sm font-medium text-text">보증금 예산 (선택)</p>
@@ -103,7 +102,7 @@ export function BudgetSection({
       />
       <p className={depositError ? 'mt-2 text-xs text-red' : 'mt-2 text-xs text-muted'}>
         {depositError ??
-          `보증금이 예산의 ${100 + DEPOSIT_BUDGET_SLACK_PERCENT}%를 넘으면 제외합니다. 비워 두면 보증금은 보지 않습니다.`}
+          '보증금이 예산을 넘는 매물은 제외합니다. 비워 두면 보증금은 보지 않습니다.'}
       </p>
     </SectionCard>
   )

@@ -47,7 +47,7 @@ export const VISITS_MAX = 14
 export const FACTORS = [
   { key: 'travel', label: '이동시간', description: '학과 건물 · 시간표 건물까지 도보 (편도)' },
   { key: 'transit', label: '교통 편의성', description: '가장 가까운 지하철역까지 도보' },
-  { key: 'cost', label: '주거비', description: '월세 + 관리비' },
+  { key: 'cost', label: '주거비', description: '월세 + 관리비 · 예산 안 매물끼리 비교' },
 ] as const
 export type Factor = (typeof FACTORS)[number]['key']
 export type Priorities = [Factor, Factor]
@@ -89,6 +89,4 @@ export const COMMUTE_MIN = 5
 export const COMMUTE_MAX = 60
 export const COMMUTE_STEP = 5
 
-// 예산 여유 (scoring_config.monthly_budget_slack_manwon / deposit_budget_slack_ratio) — 화면 안내용
-export const MONTHLY_BUDGET_SLACK_MANWON = 10
-export const DEPOSIT_BUDGET_SLACK_PERCENT = 20
+// 예산·보증금 예산은 1차 필터로만 쓰고 점수에는 쓰지 않는다 (BE scoring_config, 2026-11-08 결정: 여유 0)

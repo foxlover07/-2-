@@ -13,18 +13,18 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ScoringConfig:
     # ---- 3장 시간 점수 함수 score(t; T, h)
-    score_max: float = 100.0         # 0분 (주거비는 cost_full_score_ratio 이하) 점수
+    score_max: float = 100.0         # 0분 (주거비는 필터 통과 매물 중 가장 싼 매물) 점수
     score_at_target: float = 85.0    # 희망 시간 지점 점수 (T분 = 85점)
 
     # ---- 2장 필수 조건 (예산 필터)
-    monthly_budget_slack_manwon: float = 10.0  # 월 고정 주거비: 예산 + 10만 원 넘으면 제외
-    deposit_budget_slack_ratio: float = 0.2    # 보증금: 보증금 예산 × (1 + 0.2) 넘으면 제외
+    # 2026-11-08 결정: 예산·보증금 예산은 1차 필터로만 쓴다 (여유 구간·'예산 초과' 없음, 점수에 안 씀).
+    # 설계안 초기값은 월 +10만 원, 보증금 +20% 였다.
+    monthly_budget_slack_manwon: float = 0.0   # 월 고정 주거비 > 예산 + 여유 → 제외
+    deposit_budget_slack_ratio: float = 0.0    # 보증금 > 보증금 예산 × (1 + 여유) → 제외
 
     # ---- 4.3장 주거비 점수
-    # 예산의 20% 이하면 100점, 예산과 같으면 0점 (분모 = 예산 × (1 − 0.2) = 예산 × 0.8).
-    # 임시 완화: 설계안 초기값 0.6(분모 0.4)은 주거비 점수가 너무 가팔라, 이동시간을 1순위로 골라도
-    # 주거비가 더 크게 작용했다. 테스트 케이스로 값을 정하기 전까지 0.2 로 둔다.
-    cost_full_score_ratio: float = 0.2
+    # 2026-11-08 결정: 예산과 상관없이 필터를 통과한 매물 안에서 상대 비교한다
+    # (가장 싼 매물 100점 ~ 가장 비싼 매물 0점, 직선). 주거비만 절대 점수가 아니다.
 
     # ---- 4.1장 이동시간: 부분별 반감기 (T 는 학과 건물·시간표 모두 사용자 희망 통학 시간)
     department_half_life_min: float = 10.0

@@ -61,7 +61,8 @@ def test_score_shape_comes_from_config():
 
 def test_config_initial_values_match_design_section_8():
     c = CONFIG
-    assert (c.monthly_budget_slack_manwon, c.deposit_budget_slack_ratio) == (10, 0.2)
+    # 2026-11-08 결정: 예산은 필터만, 여유 없음 (설계안 초기값 10, 0.2)
+    assert (c.monthly_budget_slack_manwon, c.deposit_budget_slack_ratio) == (0, 0)
     assert c.score_at_target == 85
     assert (c.department_half_life_min, c.timetable_half_life_min) == (10, 10)
     assert (c.frequent_target_min, c.frequent_half_life_min) == (20, 15)
@@ -69,7 +70,7 @@ def test_config_initial_values_match_design_section_8():
     assert (c.transfer_penalty_min, c.wait_penalty_min) == (5, 3)
     assert (c.subway_target_min, c.subway_half_life_min) == (5, 5)
     assert (c.travel_weight_department, c.travel_weight_frequent, c.travel_weight_timetable) == (0.4, 0.4, 0.2)
-    assert c.cost_full_score_ratio == 0.2  # 임시 완화 (설계안 초기값 0.6, 분모 0.4 → 0.8)
+    assert not hasattr(c, "cost_full_score_ratio")  # 주거비는 상대 비교라 예산 비율 설정이 없다
     assert (c.weight_rank1, c.weight_rank2, c.weight_rank3) == (0.55, 0.30, 0.15)
     assert (c.not_recommended_top_k, c.not_recommended_max) == (3, 3)
     assert c.displayed_top_n == 3

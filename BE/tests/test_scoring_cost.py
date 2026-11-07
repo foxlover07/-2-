@@ -1,4 +1,4 @@
-"""2단계: 예산 필터 + 주거비 점수 (설계안 2장, 4.3장)."""
+"""2단계: 예산 필터 + 주거비 점수 (설계안 2장, 4.3장 · 2026-11-08 결정: 예산은 필터만, 주거비는 상대 비교)."""
 
 from dataclasses import replace
 
@@ -37,23 +37,23 @@ def test_within_budget_passes():
     assert budget_exclusion_reason(BY_ID["P003"], budget_manwon=60) is None  # 55
 
 
-def test_slack_zone_passes_but_is_over_budget():
-    # 예산 80 + 여유 10 = 90 까지 통과. P001 87 은 통과하지만 예산 초과 표시
-    assert budget_exclusion_reason(BY_ID["P001"], budget_manwon=80) is None
-    assert is_over_budget(87, 80) is True
+def test_exactly_budget_passes_and_just_over_is_excluded():
+    # 예산은 1차 필터로만 쓰고 여유 구간이 없다 (2026-11-08 결정)
+    p = with_cost(BY_ID["P001"], 70, 10)  # 80
+    assert budget_exclusion_reason(p, budget_manwon=80) is None
+    p = with_cost(BY_ID["P001"], 70, 10.5)  # 80.5
+    assert budget_exclusion_reason(p, budget_manwon=80) == "예산보다 월 0.5만 원 비싸서 제외"
+
+
+def test_no_over_budget_zone():
+    # 예산을 넘는 매물은 필터에서 빠지므로 추천 결과에 '예산 초과' 매물이 없다
+    assert budget_exclusion_reason(BY_ID["P001"], budget_manwon=80) == "예산보다 월 7만 원 비싸서 제외"  # 87
     assert is_over_budget(80, 80) is False
 
 
-def test_exactly_budget_plus_slack_passes_and_just_over_is_excluded():
-    p = with_cost(BY_ID["P001"], 80, 10)  # 90
-    assert budget_exclusion_reason(p, budget_manwon=80) is None
-    p = with_cost(BY_ID["P001"], 80, 10.5)  # 90.5
-    assert budget_exclusion_reason(p, budget_manwon=80) is not None
-
-
-def test_monthly_over_slack_is_excluded_with_amount():
+def test_monthly_over_budget_is_excluded_with_amount():
     # 설계안 예시 문구: "예산보다 월 12만 원 비싸서 제외"
-    p = with_cost(BY_ID["P001"], 70, 12)  # 82, 예산 70 → 12만 원 초과 (> 여유 10)
+    p = with_cost(BY_ID["P001"], 70, 12)  # 82, 예산 70
     assert budget_exclusion_reason(p, budget_manwon=70) == "예산보다 월 12만 원 비싸서 제외"
 
 
@@ -65,15 +65,8 @@ def test_monthly_cost_missing_is_excluded():
 def test_deposit_filter_only_when_deposit_budget_given():
     p003 = BY_ID["P003"]  # 보증금 2000, 월 55
     assert budget_exclusion_reason(p003, budget_manwon=60) is None
-    # 1000 × 1.2 = 1200 < 2000 → 제외
-    assert budget_exclusion_reason(p003, 60, deposit_budget_manwon=1000) == "보증금이 예산보다 1000만 원 많아서 제외"
-    # 1700 × 1.2 = 2040 ≥ 2000 → 통과
-    assert budget_exclusion_reason(p003, 60, deposit_budget_manwon=1700) is None
-
-
-def test_deposit_exactly_slack_passes():
-    p = BY_ID["P001"]  # 보증금 1000
-    assert budget_exclusion_reason(p, 100, deposit_budget_manwon=1000 / 1.2) is None
+    assert budget_exclusion_reason(p003, 60, deposit_budget_manwon=1999) == "보증금이 예산보다 1만 원 많아서 제외"
+    assert budget_exclusion_reason(p003, 60, deposit_budget_manwon=2000) is None  # 같으면 통과
 
 
 def test_deposit_missing_is_excluded_only_when_deposit_budget_given():
@@ -83,44 +76,40 @@ def test_deposit_missing_is_excluded_only_when_deposit_budget_given():
 
 
 def test_slack_comes_from_config():
-    cfg = replace(CONFIG, monthly_budget_slack_manwon=0)
-    assert budget_exclusion_reason(BY_ID["P001"], budget_manwon=80, cfg=cfg) is not None  # 87 > 80 + 0
+    # 여유는 설정값으로 다시 켤 수 있다 (설계안 초기값 월 +10만 원)
+    cfg = replace(CONFIG, monthly_budget_slack_manwon=10)
+    assert budget_exclusion_reason(BY_ID["P001"], budget_manwon=80, cfg=cfg) is None  # 87 ≤ 80 + 10
 
 
-# ---------------------------------------------------------------- 주거비 점수
+# ---------------------------------------------------------------- 주거비 점수 (필터 통과 매물 안 상대 비교)
 
 @pytest.mark.parametrize(
     ("cost", "expected"),
     [
-        (10, 100),   # 예산의 20% 이하 → 100점
-        (20, 100),   # 정확히 20%
-        (60, 50),    # 100 × (100 − 60) ÷ 80
-        (70, 37.5),
-        (90, 12.5),
-        (100, 0),    # 예산과 같으면 0점
-        (105, 0),    # 여유 구간도 0점
+        (40, 100),   # 가장 싼 매물
+        (50, 75),    # 100 × (80 − 50) ÷ (80 − 40)
+        (60, 50),
+        (80, 0),     # 가장 비싼 매물
     ],
 )
-def test_cost_score_budget_100(cost, expected):
-    assert cost_score(cost, 100) == pytest.approx(expected)
+def test_cost_score_relative_between_lowest_and_highest(cost, expected):
+    assert cost_score(cost, 40, 80) == pytest.approx(expected)
 
 
 def test_cost_score_is_linear():
-    # 1만 원 차이가 어느 구간에서나 같은 점수 차이
-    assert cost_score(70, 100) - cost_score(71, 100) == pytest.approx(cost_score(90, 100) - cost_score(91, 100))
+    assert cost_score(50, 40, 80) - cost_score(51, 40, 80) == pytest.approx(cost_score(70, 40, 80) - cost_score(71, 40, 80))
 
 
-def test_cost_score_is_absolute_not_relative():
-    # 다른 매물과 상관없이 예산과 비용만으로 정해진다
-    assert cost_score(55, 80) == pytest.approx(100 * (80 - 55) / 64)
+def test_cost_score_does_not_use_budget():
+    # 같은 매물 묶음이면 예산과 상관없이 같은 점수 (예산은 필터에만)
+    assert cost_score(60, 40, 80) == cost_score(60, 40, 80)
+    assert "budget" not in cost_score.__code__.co_varnames
 
 
-def test_cost_score_rejects_zero_budget():
+def test_cost_score_all_same_is_full():
+    assert cost_score(55, 55, 55) == 100
+
+
+def test_cost_score_rejects_inverted_range():
     with pytest.raises(ValueError):
-        cost_score(50, 0)
-
-
-def test_cost_full_score_ratio_from_config():
-    cfg = replace(CONFIG, cost_full_score_ratio=0.5)
-    assert cost_score(50, 100, cfg) == 100
-    assert cost_score(75, 100, cfg) == pytest.approx(50)
+        cost_score(50, 80, 40)
