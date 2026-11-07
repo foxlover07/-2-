@@ -13,7 +13,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ScoringConfig:
     # ---- 3장 시간 점수 함수 score(t; T, h)
-    score_max: float = 100.0         # 0분 (주거비는 예산의 60% 이하) 점수
+    score_max: float = 100.0         # 0분 (주거비는 cost_full_score_ratio 이하) 점수
     score_at_target: float = 85.0    # 희망 시간 지점 점수 (T분 = 85점)
 
     # ---- 2장 필수 조건 (예산 필터)
@@ -21,7 +21,10 @@ class ScoringConfig:
     deposit_budget_slack_ratio: float = 0.2    # 보증금: 보증금 예산 × (1 + 0.2) 넘으면 제외
 
     # ---- 4.3장 주거비 점수
-    cost_full_score_ratio: float = 0.6  # 예산의 60% 이하면 100점, 예산과 같으면 0점
+    # 예산의 20% 이하면 100점, 예산과 같으면 0점 (분모 = 예산 × (1 − 0.2) = 예산 × 0.8).
+    # 임시 완화: 설계안 초기값 0.6(분모 0.4)은 주거비 점수가 너무 가팔라, 이동시간을 1순위로 골라도
+    # 주거비가 더 크게 작용했다. 테스트 케이스로 값을 정하기 전까지 0.2 로 둔다.
+    cost_full_score_ratio: float = 0.2
 
     # ---- 4.1장 이동시간: 부분별 반감기 (T 는 학과 건물·시간표 모두 사용자 희망 통학 시간)
     department_half_life_min: float = 10.0

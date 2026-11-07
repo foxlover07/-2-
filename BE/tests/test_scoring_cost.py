@@ -92,11 +92,11 @@ def test_slack_comes_from_config():
 @pytest.mark.parametrize(
     ("cost", "expected"),
     [
-        (30, 100),   # 예산의 60% 이하 → 100점
-        (60, 100),   # 정확히 60%
-        (70, 75),    # 100 × (100 − 70) ÷ 40
-        (80, 50),
-        (90, 25),
+        (10, 100),   # 예산의 20% 이하 → 100점
+        (20, 100),   # 정확히 20%
+        (60, 50),    # 100 × (100 − 60) ÷ 80
+        (70, 37.5),
+        (90, 12.5),
         (100, 0),    # 예산과 같으면 0점
         (105, 0),    # 여유 구간도 0점
     ],
@@ -112,7 +112,7 @@ def test_cost_score_is_linear():
 
 def test_cost_score_is_absolute_not_relative():
     # 다른 매물과 상관없이 예산과 비용만으로 정해진다
-    assert cost_score(55, 80) == pytest.approx(100 * (80 - 55) / 32)
+    assert cost_score(55, 80) == pytest.approx(100 * (80 - 55) / 64)
 
 
 def test_cost_score_rejects_zero_budget():

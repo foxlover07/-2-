@@ -102,9 +102,9 @@ def is_over_budget(monthly_cost: float, budget_manwon: float) -> bool:
 
 
 def cost_score(monthly_cost: float, budget_manwon: float, cfg: ScoringConfig = CONFIG) -> float:
-    """주거비 점수 = 100 × (예산 − 월 고정 주거비) ÷ (예산 × 0.4) → 0~100 으로 자른다.
+    """주거비 점수 = 100 × (예산 − 월 고정 주거비) ÷ (예산 × (1 − cost_full_score_ratio)) → 0~100 으로 자른다.
 
-    예산의 60% 이하면 100점, 예산과 같으면 0점, 여유 구간(예산 초과)도 0점.
+    예산의 cost_full_score_ratio(지금 20%, 임시) 이하면 100점, 예산과 같으면 0점, 여유 구간(예산 초과)도 0점.
     """
     if budget_manwon <= 0:
         raise ValueError(f"예산은 0보다 커야 합니다: {budget_manwon}")

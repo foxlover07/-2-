@@ -152,9 +152,9 @@ def test_over_budget_marked_and_cost_score_zero():
     p007 = next(s for s in result.ranked if s.property_id == "P007")  # 82 (75 ~ 85 여유 구간)
     assert p007.over_budget is True
     assert p007.factor_scores["cost"] == 0
-    p005 = next(s for s in result.ranked if s.property_id == "P005")  # 45 ≤ 75 × 0.6
+    p005 = next(s for s in result.ranked if s.property_id == "P005")  # 45: 100 × (75 − 45) ÷ (75 × 0.8)
     assert p005.over_budget is False
-    assert p005.factor_scores["cost"] == 100
+    assert p005.factor_scores["cost"] == 50
 
 
 def test_result_limit_from_config():
