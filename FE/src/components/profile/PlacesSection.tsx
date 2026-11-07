@@ -15,11 +15,12 @@ import { Stepper } from './Stepper'
 import { TIME_INPUT, newRowId, type PlaceRow } from './profileForm'
 
 interface PlacesSectionProps {
+  step: number
   rows: PlaceRow[]
   onRowsChange: (rows: PlaceRow[]) => void
 }
 
-export function PlacesSection({ rows, onRowsChange }: PlacesSectionProps) {
+export function PlacesSection({ step, rows, onRowsChange }: PlacesSectionProps) {
   const update = (id: number, patch: Partial<PlaceRow>) =>
     onRowsChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   const remove = (id: number) => onRowsChange(rows.filter((r) => r.id !== id))
@@ -30,11 +31,11 @@ export function PlacesSection({ rows, onRowsChange }: PlacesSectionProps) {
     ])
 
   return (
-    <SectionCard step={2} title="자주 가는 곳" description="알바·헬스장·공부·본가 가는 역 등 · 주 1회 이상 가는 곳">
+    <SectionCard step={step} title="자주 가는 곳 (선택)" description="알바·헬스장·공부·본가 가는 역 등 · 주 1회 이상 가는 곳">
       <p className="flex items-start gap-2 rounded-control bg-amber-50 px-4 py-3 text-sm text-amber">
         <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-        지금은 매물에서 각 지역까지의 이동시간 데이터가 없어 추천 계산에서 빠집니다. 데이터가 준비되면 자동으로
-        반영됩니다.
+        지금은 매물에서 각 지역까지의 이동시간 데이터가 없어 추천 계산에서 빠집니다(저장만 됩니다). 대중교통 추정
+        데이터가 준비되면 이동시간 점수에 반영됩니다.
       </p>
 
       <ul className="mt-4 flex flex-col gap-3">
@@ -128,7 +129,7 @@ export function PlacesSection({ rows, onRowsChange }: PlacesSectionProps) {
         장소 추가
       </Button>
       <p className="mt-3 text-xs text-muted">
-        지역: {EWHA_AREAS.join(' · ')} | {LATE_NIGHT_FROM} 이후 끝나면 심야 귀가 기준에 쓰입니다
+        지역: {EWHA_AREAS.join(' · ')} | {LATE_NIGHT_FROM} 이후 끝나면 심야 일정으로 표시합니다
       </p>
     </SectionCard>
   )

@@ -1,21 +1,16 @@
 import {
-  CRITERIA,
+  COMMUTE_DEFAULT,
   DAYS,
-  DISABLED_CRITERIA,
-  EQUAL_WEIGHTS,
+  DEFAULT_PRIORITIES,
   EWHA_AREAS,
-  GAP_BUFFER_DEFAULT,
-  GAP_BUFFER_MAX,
-  GAP_BUFFER_MIN,
-  IMPORTANCE_MAX,
-  IMPORTANCE_MIN,
+  FACTORS,
   PLACE_KINDS,
   TIME_RE,
-  WEIGHTS_TOTAL,
   type Area,
   type Day,
+  type Factor,
   type PlaceKind,
-  type WeightsPercent,
+  type Priorities,
 } from '../constants/recommend'
 import type { SpotVisits } from './walk'
 
@@ -35,29 +30,34 @@ export interface FrequentPlace {
 }
 
 export interface Profile {
-  // 간단 추천 설정 (BE recommend.Profile 과 같은 모양). 선택한 강의동만 키로 들어간다.
-  visits: SpotVisits
-  budgetManwon: number | null
-  costImportance: number
-  walkImportance: number
-  // 학생 맞춤 추천 (BE criteria.Lifestyle)
+  // 추천 v2 입력 (BE scoring.RecommendRequest)
+  department: string // '' = 미입력
+  departmentBuildings: string[]
+  grade: number | null
+  desiredCommuteMin: number
+  budgetManwon: number | null // 월 고정 주거비 예산. 추천 요청에는 필수
+  depositBudgetManwon: number | null
+  priorities: Priorities
   timetable: ClassSlot[]
+  // 자주 가는 곳: 추천 v2 7단계 전까지 저장만 한다
   places: FrequentPlace[]
-  gapBufferMin: number
-  weightsPercent: WeightsPercent
+  // 강의동별 주간 방문 횟수: 매물 상세·비교 화면의 가중 평균 도보시간 표시에 쓴다
+  visits: SpotVisits
   // 마지막 저장 시각 (ISO). 저장한 적이 없으면 null.
   savedAt: string | null
 }
 
 export const EMPTY_PROFILE: Profile = {
-  visits: {},
+  department: '',
+  departmentBuildings: [],
+  grade: null,
+  desiredCommuteMin: COMMUTE_DEFAULT,
   budgetManwon: null,
-  costImportance: 3,
-  walkImportance: 3,
+  depositBudgetManwon: null,
+  priorities: DEFAULT_PRIORITIES,
   timetable: [],
   places: [],
-  gapBufferMin: GAP_BUFFER_DEFAULT,
-  weightsPercent: EQUAL_WEIGHTS,
+  visits: {},
   savedAt: null,
 }
 
@@ -68,10 +68,9 @@ type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
 const isTime = (v: unknown): v is string => typeof v === 'string' && TIME_RE.test(v)
-
-export function isImportance(v: unknown): v is number {
-  return isInt(v) && v >= IMPORTANCE_MIN && v <= IMPORTANCE_MAX
-}
+const isNonNegOrNull = (v: unknown): v is number | null =>
+  v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0)
+const isFactor = (v: unknown): v is Factor => FACTORS.some((f) => f.key === v)
 
 function isClassSlot(v: unknown): v is ClassSlot {
   return (
@@ -96,49 +95,45 @@ function isFrequentPlace(v: unknown): v is FrequentPlace {
   )
 }
 
-export function weightsTotal(w: WeightsPercent): number {
-  return CRITERIA.reduce((sum, c) => sum + w[c.key], 0)
+function isPriorities(v: unknown): v is Priorities {
+  return Array.isArray(v) && v.length === 2 && isFactor(v[0]) && isFactor(v[1]) && v[0] !== v[1]
 }
 
-function isWeightsPercent(v: unknown): v is WeightsPercent {
-  if (!isObj(v)) return false
-  const ok = CRITERIA.every((c) => {
-    const n = v[c.key]
-    return typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= WEIGHTS_TOTAL
-  })
-  if (!ok) return false
-  const w = v as WeightsPercent
-  return DISABLED_CRITERIA.every((k) => w[k] === 0) && Math.abs(weightsTotal(w) - WEIGHTS_TOTAL) <= 0.5
-}
-
-// 간단 추천 설정은 예전 저장값에도 있던 필드라 하나라도 틀리면 저장값 전체를 버린다(기존 동작과 같음).
-function hasLegacyFields(p: Obj): boolean {
-  const visits = p.visits
-  return (
-    isObj(visits) &&
-    Object.values(visits).every((n) => isInt(n) && n >= 0) &&
-    (p.budgetManwon === null || (typeof p.budgetManwon === 'number' && p.budgetManwon >= 0)) &&
-    isImportance(p.costImportance) &&
-    isImportance(p.walkImportance)
-  )
+function isVisits(v: unknown): v is SpotVisits {
+  return isObj(v) && Object.values(v).every((n) => isInt(n) && n >= 0)
 }
 
 /**
- * localStorage 값 → Profile. 예전 형식(새 필드 없음)도 읽는다.
- * 새 필드는 없거나 틀리면 기본값을 쓰고, 시간표·장소는 올바른 행만 남긴다.
+ * localStorage 값 → Profile. 예전 형식(v1: 반영 비율·공강 여유·중요도)도 읽는다.
+ * 없거나 틀린 필드는 기본값을 쓰고, 시간표·장소는 올바른 행만 남긴다. v1 전용 필드는 버린다.
  */
 export function parseStoredProfile(value: unknown): Profile | null {
-  if (!isObj(value) || !hasLegacyFields(value)) return null
-  const gap = value.gapBufferMin
+  if (!isObj(value)) return null
+  const v = value
+  const commute = v.desiredCommuteMin
   return {
-    visits: value.visits as SpotVisits,
-    budgetManwon: value.budgetManwon as number | null,
-    costImportance: value.costImportance as number,
-    walkImportance: value.walkImportance as number,
-    timetable: Array.isArray(value.timetable) ? value.timetable.filter(isClassSlot) : [],
-    places: Array.isArray(value.places) ? value.places.filter(isFrequentPlace) : [],
-    gapBufferMin: isInt(gap) && gap >= GAP_BUFFER_MIN && gap <= GAP_BUFFER_MAX ? gap : GAP_BUFFER_DEFAULT,
-    weightsPercent: isWeightsPercent(value.weightsPercent) ? value.weightsPercent : EQUAL_WEIGHTS,
-    savedAt: typeof value.savedAt === 'string' ? value.savedAt : null,
+    department: typeof v.department === 'string' ? v.department : '',
+    departmentBuildings: Array.isArray(v.departmentBuildings)
+      ? v.departmentBuildings.filter((b): b is string => typeof b === 'string' && b !== '')
+      : [],
+    grade: isInt(v.grade) && v.grade >= 1 ? v.grade : null,
+    desiredCommuteMin: typeof commute === 'number' && commute > 0 ? commute : COMMUTE_DEFAULT,
+    budgetManwon: isNonNegOrNull(v.budgetManwon) ? v.budgetManwon : null,
+    depositBudgetManwon: isNonNegOrNull(v.depositBudgetManwon) ? v.depositBudgetManwon : null,
+    priorities: isPriorities(v.priorities) ? v.priorities : DEFAULT_PRIORITIES,
+    timetable: Array.isArray(v.timetable) ? v.timetable.filter(isClassSlot) : [],
+    places: Array.isArray(v.places) ? v.places.filter(isFrequentPlace) : [],
+    visits: isVisits(v.visits) ? v.visits : {},
+    savedAt: typeof v.savedAt === 'string' ? v.savedAt : null,
   }
+}
+
+/** 추천 요청에 필요한 입력이 빠졌으면 그 목록, 다 있으면 빈 배열. */
+export function missingForRecommend(p: Profile): string[] {
+  const missing: string[] = []
+  if (p.department.trim() === '') missing.push('학과')
+  if (p.departmentBuildings.length === 0) missing.push('학과 건물')
+  if (p.grade === null) missing.push('학년')
+  if (p.budgetManwon === null || p.budgetManwon <= 0) missing.push('월 주거비 예산')
+  return missing
 }

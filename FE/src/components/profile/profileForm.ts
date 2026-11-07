@@ -1,10 +1,13 @@
 // 생활 프로필 편집 폼 상태 ↔ 저장값(Profile) 변환과 검증. 화면 컴포넌트는 이 파일만 쓴다.
-import { CRITERIA, TIME_RE, WEIGHTS_TOTAL, type Area, type Day, type PlaceKind, type WeightsPercent } from '../../constants/recommend'
-import { weightsTotal, type ClassSlot, type FrequentPlace, type Profile } from '../../utils/profile'
+import { DEPARTMENTS, TIME_RE, type Area, type Day, type PlaceKind, type Priorities } from '../../constants/recommend'
+import type { ClassSlot, FrequentPlace, Profile } from '../../utils/profile'
 import type { SpotVisits } from '../../utils/walk'
 
 export const TIME_INPUT =
   'h-10 w-full rounded-control border bg-white px-3 text-sm text-text outline-none focus:border-blue focus:ring-1 focus:ring-blue'
+
+// 학과 선택지 중 "직접 입력"
+export const CUSTOM_DEPARTMENT = '__custom__'
 
 let nextId = 1
 export const newRowId = () => nextId++
@@ -27,22 +30,30 @@ export interface PlaceRow {
 }
 
 export interface FormState {
-  visits: SpotVisits
+  departmentChoice: string // '' = 미선택, DEPARTMENTS 중 하나, 또는 CUSTOM_DEPARTMENT
+  customDepartment: string
+  departmentBuildings: string[]
+  grade: number | null
+  desiredCommuteMin: number
   budgetText: string
-  costImportance: number
-  walkImportance: number
+  depositText: string
+  priorities: Priorities
   timetable: TimetableRow[]
   places: PlaceRow[]
-  gapBufferMin: number
-  weightsPercent: WeightsPercent
+  visits: SpotVisits
 }
 
 export function toForm(p: Profile): FormState {
+  const known = DEPARTMENTS.includes(p.department)
   return {
-    visits: p.visits,
+    departmentChoice: p.department === '' ? '' : known ? p.department : CUSTOM_DEPARTMENT,
+    customDepartment: known ? '' : p.department,
+    departmentBuildings: p.departmentBuildings,
+    grade: p.grade,
+    desiredCommuteMin: p.desiredCommuteMin,
     budgetText: p.budgetManwon === null ? '' : String(p.budgetManwon),
-    costImportance: p.costImportance,
-    walkImportance: p.walkImportance,
+    depositText: p.depositBudgetManwon === null ? '' : String(p.depositBudgetManwon),
+    priorities: p.priorities,
     timetable: p.timetable.map((s) => ({ id: newRowId(), ...s })),
     places: p.places.map((pl) => ({
       id: newRowId(),
@@ -52,16 +63,20 @@ export function toForm(p: Profile): FormState {
       fromCampus: pl.fromCampus,
       endsAt: pl.endsAt ?? '',
     })),
-    gapBufferMin: p.gapBufferMin,
-    weightsPercent: p.weightsPercent,
+    visits: p.visits,
   }
 }
 
-// 빈 칸은 "예산 미설정"(null). 숫자가 아니거나 음수면 undefined(오류).
-export function parseBudget(text: string): number | null | undefined {
+export function departmentName(form: FormState): string {
+  return (form.departmentChoice === CUSTOM_DEPARTMENT ? form.customDepartment : form.departmentChoice).trim()
+}
+
+// 빈 칸은 미설정(null). 숫자가 아니거나 범위를 벗어나면 undefined(오류).
+export function parseManwon(text: string, { positive = false } = {}): number | null | undefined {
   if (text.trim() === '') return null
   const n = Number(text)
-  return Number.isFinite(n) && n >= 0 ? n : undefined
+  if (!Number.isFinite(n)) return undefined
+  return (positive ? n > 0 : n >= 0) ? n : undefined
 }
 
 // 시간표 한 행의 오류. 없으면 null.
@@ -76,34 +91,46 @@ export function timetableRowError(row: TimetableRow, buildings: string[]): strin
 export interface FormCheck {
   budget: number | null | undefined
   budgetError: string | null
+  deposit: number | null | undefined
+  depositError: string | null
+  departmentError: string | null
   rowErrors: Record<number, string>
-  weightsSum: number
-  weightsError: string | null
   canSave: boolean
 }
 
 export function checkForm(form: FormState, buildings: string[]): FormCheck {
-  const budget = parseBudget(form.budgetText)
+  const budget = parseManwon(form.budgetText, { positive: true })
+  const deposit = parseManwon(form.depositText)
   const rowErrors: Record<number, string> = {}
   for (const row of form.timetable) {
     const err = timetableRowError(row, buildings)
     if (err) rowErrors[row.id] = err
   }
-  const weightsSum = weightsTotal(form.weightsPercent)
-  const weightsError = weightsSum === WEIGHTS_TOTAL ? null : `합계가 ${weightsSum}%입니다. 100%로 맞춰 주세요.`
-  const budgetError = budget === undefined ? '0 이상의 숫자를 입력해 주세요.' : null
+  let departmentError: string | null = null
+  if (form.departmentChoice === CUSTOM_DEPARTMENT && form.customDepartment.trim() === '') {
+    departmentError = '학과 이름을 입력해 주세요.'
+  } else if (buildings.length > 0 && form.departmentBuildings.some((b) => !buildings.includes(b))) {
+    departmentError = '목록에 없는 학과 건물이 있습니다. 다시 골라 주세요.'
+  }
+  const budgetError = budget === undefined ? '0보다 큰 숫자를 입력해 주세요.' : null
+  const depositError = deposit === undefined ? '0 이상의 숫자를 입력해 주세요.' : null
   return {
     budget,
     budgetError,
+    deposit,
+    depositError,
+    departmentError,
     rowErrors,
-    weightsSum,
-    weightsError,
-    canSave: budgetError === null && weightsError === null && Object.keys(rowErrors).length === 0,
+    canSave:
+      budgetError === null &&
+      depositError === null &&
+      departmentError === null &&
+      Object.keys(rowErrors).length === 0,
   }
 }
 
 // 검증을 통과한 폼 → 저장값. savedAt 은 저장할 때 채운다.
-export function toProfile(form: FormState, budget: number | null, spotNames: string[]): Omit<Profile, 'savedAt'> {
+export function toProfile(form: FormState, check: FormCheck, spotNames: string[]): Omit<Profile, 'savedAt'> {
   // 지금 대학의 강의동만 남긴다. 강의동 데이터가 없는 대학에서는 기존 방문 기록을 그대로 둔다.
   const visits =
     spotNames.length === 0
@@ -117,16 +144,17 @@ export function toProfile(form: FormState, budget: number | null, spotNames: str
     fromCampus: pl.fromCampus,
     endsAt: pl.endsAt === '' ? null : pl.endsAt,
   }))
-  const weightsPercent = Object.fromEntries(CRITERIA.map((c) => [c.key, form.weightsPercent[c.key]])) as WeightsPercent
   return {
-    visits,
-    budgetManwon: budget,
-    costImportance: form.costImportance,
-    walkImportance: form.walkImportance,
+    department: departmentName(form),
+    departmentBuildings: form.departmentBuildings,
+    grade: form.grade,
+    desiredCommuteMin: form.desiredCommuteMin,
+    budgetManwon: check.budget ?? null,
+    depositBudgetManwon: check.deposit ?? null,
+    priorities: form.priorities,
     timetable,
     places,
-    gapBufferMin: form.gapBufferMin,
-    weightsPercent,
+    visits,
   }
 }
 

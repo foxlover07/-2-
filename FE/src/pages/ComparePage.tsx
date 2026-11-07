@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { Columns3, Plus, TriangleAlert } from 'lucide-react'
 import { Button, Card, EmptyState } from '../components/common'
-import { AiRecommendPlaceholder } from '../components/compare/AiRecommendPlaceholder'
 import { CompareTable } from '../components/compare/CompareTable'
+import { RecommendPanel } from '../components/compare/RecommendPanel'
 import { PageContainer } from '../components/layout/PageContainer'
 import { MAX_COMPARE, useCompare } from '../contexts/CompareContext'
 import { useProfile } from '../contexts/ProfileContext'
@@ -20,7 +20,7 @@ const LINK_BUTTON =
 
 export function ComparePage() {
   const compare = useCompare()
-  const { profile } = useProfile()
+  const { profile, isSaved } = useProfile()
   const [all, setAll] = useState<Property[] | null>(null)
   const [loadError, setLoadError] = useState(false)
 
@@ -64,8 +64,12 @@ export function ComparePage() {
   return (
     <PageContainer
       title="매물 비교"
-      description={`최대 ${MAX_COMPARE}개 매물의 비용과 강의동까지 도보시간을 나란히 비교합니다.`}
+      description={`조건 기반 추천을 확인하고, 최대 ${MAX_COMPARE}개 매물의 비용과 강의동까지 도보시간을 나란히 비교합니다.`}
     >
+      <div className="mb-5">
+        <RecommendPanel profile={profile} isSaved={isSaved} properties={all} />
+      </div>
+
       {missingCount > 0 && (
         <p className="mb-4 rounded-control bg-bg px-4 py-2 text-sm text-muted">
           비교 목록 중 {missingCount}개 매물은 데이터에서 찾을 수 없어 제외했습니다.
@@ -139,8 +143,6 @@ export function ComparePage() {
               )}
             </div>
           </div>
-
-          <AiRecommendPlaceholder />
         </div>
       )}
     </PageContainer>

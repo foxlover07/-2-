@@ -188,7 +188,7 @@ function ActionCard({ property: p }: { property: Property }) {
           rel="noopener noreferrer"
           className="inline-flex h-10 items-center justify-center gap-1.5 rounded-control border border-border bg-white px-4 text-sm font-medium text-text hover:bg-bg"
         >
-          네이버 부동산에서 원본 보기
+          {sourceSiteLabel(p.source_url)}에서 원본 보기
           <ExternalLink className="size-4" aria-hidden />
         </a>
       ) : (
@@ -196,4 +196,19 @@ function ActionCard({ property: p }: { property: Property }) {
       )}
     </Card>
   )
+}
+
+// 원본 링크의 사이트 이름 (링크 주소는 받은 그대로 쓰고, 표시 이름만 고른다)
+function sourceSiteLabel(url: string): string {
+  let host = ''
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return '원본 사이트'
+  }
+  if (host.endsWith('land.naver.com')) return '네이버 부동산'
+  if (host.endsWith('zigbang.com')) return '직방'
+  if (host.endsWith('dabangapp.com')) return '다방'
+  if (host.endsWith('daangn.com')) return '당근'
+  return '원본 사이트'
 }

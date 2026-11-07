@@ -1,68 +1,33 @@
 import { Building2 } from 'lucide-react'
-import { IMPORTANCE_MAX, IMPORTANCE_MIN, VISITS_MAX, VISITS_MIN } from '../../constants/recommend'
-import { cx } from '../../utils/cx'
+import { VISITS_MAX, VISITS_MIN } from '../../constants/recommend'
 import type { SpotVisits } from '../../utils/walk'
 import { EmptyState } from '../common'
 import { SectionCard } from './SectionCard'
 import { Stepper } from './Stepper'
 
-const LEVELS = Array.from({ length: IMPORTANCE_MAX - IMPORTANCE_MIN + 1 }, (_, i) => IMPORTANCE_MIN + i)
-
-function ImportancePicker({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
-  return (
-    <fieldset>
-      <legend className="mb-2 text-sm font-medium text-text">{label}</legend>
-      <div className="inline-flex overflow-hidden rounded-control border border-border" role="radiogroup">
-        {LEVELS.map((n) => (
-          <button
-            key={n}
-            type="button"
-            role="radio"
-            aria-checked={value === n}
-            aria-label={`${label} ${n}`}
-            onClick={() => onChange(n)}
-            className={cx(
-              'h-9 w-11 border-l border-border text-sm first:border-l-0',
-              value === n ? 'bg-blue-50 font-bold text-blue' : 'bg-white text-text hover:bg-bg',
-            )}
-          >
-            {n}
-          </button>
-        ))}
-      </div>
-      <p className="mt-1 text-xs text-muted">1 덜 중요 · 5 매우 중요</p>
-    </fieldset>
-  )
-}
-
 interface SimpleSettingsSectionProps {
+  step: number
   loading: boolean
   universityLabel: string
   spotNames: string[]
   visits: SpotVisits
   onVisitsChange: (name: string, count: number | null) => void
-  costImportance: number
-  walkImportance: number
-  onCostImportanceChange: (v: number) => void
-  onWalkImportanceChange: (v: number) => void
 }
 
+// 강의동별 주간 방문 횟수. 추천 점수에는 쓰지 않고, 매물 상세·비교 화면의 가중 평균 도보시간 표시에만 쓴다.
 export function SimpleSettingsSection({
+  step,
   loading,
   universityLabel,
   spotNames,
   visits,
   onVisitsChange,
-  costImportance,
-  walkImportance,
-  onCostImportanceChange,
-  onWalkImportanceChange,
 }: SimpleSettingsSectionProps) {
   return (
     <SectionCard
-      step={5}
-      title="간단 추천 설정"
-      description="시간표를 입력하지 않았을 때 쓰는 기준 · 강의동별 주간 방문 횟수와 중요도(1~5)"
+      step={step}
+      title="강의동 방문 횟수 (선택)"
+      description="매물 상세·비교 화면의 가중 평균 도보시간 표시에 쓰입니다 · 추천 점수에는 들어가지 않습니다"
     >
       {loading ? (
         <p className="py-8 text-center text-sm text-muted">강의동 정보를 불러오는 중입니다…</p>
@@ -105,11 +70,6 @@ export function SimpleSettingsSection({
           })}
         </ul>
       )}
-
-      <div className="mt-6 grid gap-6 sm:grid-cols-2">
-        <ImportancePicker label="주거비 중요도" value={costImportance} onChange={onCostImportanceChange} />
-        <ImportancePicker label="이동시간 중요도" value={walkImportance} onChange={onWalkImportanceChange} />
-      </div>
     </SectionCard>
   )
 }
