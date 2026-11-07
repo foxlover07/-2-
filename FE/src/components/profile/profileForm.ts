@@ -98,18 +98,19 @@ export interface FormCheck {
   canSave: boolean
 }
 
-export function checkForm(form: FormState, buildings: string[]): FormCheck {
+// deptBuildings: 학과 건물 선택지, ttBuildings: 시간표 건물 선택지 (도보시간 표가 있으면 더 많다)
+export function checkForm(form: FormState, deptBuildings: string[], ttBuildings: string[] = deptBuildings): FormCheck {
   const budget = parseManwon(form.budgetText, { positive: true })
   const deposit = parseManwon(form.depositText)
   const rowErrors: Record<number, string> = {}
   for (const row of form.timetable) {
-    const err = timetableRowError(row, buildings)
+    const err = timetableRowError(row, ttBuildings)
     if (err) rowErrors[row.id] = err
   }
   let departmentError: string | null = null
   if (form.departmentChoice === CUSTOM_DEPARTMENT && form.customDepartment.trim() === '') {
     departmentError = '학과 이름을 입력해 주세요.'
-  } else if (buildings.length > 0 && form.departmentBuildings.some((b) => !buildings.includes(b))) {
+  } else if (deptBuildings.length > 0 && form.departmentBuildings.some((b) => !deptBuildings.includes(b))) {
     departmentError = '목록에 없는 학과 건물이 있습니다. 다시 골라 주세요.'
   }
   const budgetError = budget === undefined ? '0보다 큰 숫자를 입력해 주세요.' : null

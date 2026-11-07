@@ -47,3 +47,33 @@ def test_data_csv_path_relative_to_be_dir(monkeypatch):
     monkeypatch.setenv("DATA_CSV_PATH", "../DB/poc_ewha.csv")
     monkeypatch.chdir(BE_DIR.parent)  # 다른 위치에서 실행해도
     assert _csv_path() == DEFAULT_CSV_PATH.resolve()
+
+
+def test_walk_table_adds_buildings_to_travel_times(tmp_path, monkeypatch):
+    """도보시간 표(WALK_TABLE_PATH)의 건물이 spot1~4 에 더해진다. 표에 없는 매물은 그대로."""
+    from app.data import load_properties, load_travel_times, load_walk_table
+
+    f = tmp_path / "walk.csv"
+    f.write_text(
+        "property_id,building,destination_id,walk_min,route_source,route_mode,checked_at,source_file\n"
+        "P001,인문관,EWHA_INMUN,12.5,kakao_walk,BROAD_FIRST,2026-11-08,x\n"
+        "NOPE,인문관,EWHA_INMUN,1,kakao_walk,BROAD_FIRST,2026-11-08,x\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WALK_TABLE_PATH", str(f))
+    load_walk_table.cache_clear()
+    times = load_travel_times(load_properties())
+    assert times["P001"]["인문관"] == 12.5
+    assert times["P001"]["ECC"] == 19  # 기존 spot 값 유지
+    assert "인문관" not in times["P002"]
+    assert "NOPE" not in times
+
+
+def test_buildings_endpoint_counts_coverage():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    data = TestClient(app).get("/recommend/buildings").json()
+    assert {b["name"] for b in data} == {"ECC", "이화·포스코관", "학관", "공과대학"}
+    assert all(b["covered"] == b["total"] == 10 for b in data)

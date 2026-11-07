@@ -1,4 +1,5 @@
 import csv
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -46,3 +47,46 @@ def load_properties() -> tuple[Property, ...]:
 
 def get_property(property_id: str) -> Property | None:
     return next((p for p in load_properties() if p.property_id == property_id), None)
+
+
+# ---------------------------------------------------------------- 매물 × 강의동 도보시간 (긴 형식, 선택)
+
+def _walk_table_path() -> Path | None:
+    """WALK_TABLE_PATH (DATA_CSV_PATH 와 같은 규칙). 없으면 매물 CSV 의 spot1~4 만 쓴다.
+
+    프로세스 환경 변수에 빈 값으로 있으면 .env 파일 값과 상관없이 '표 없음'이다 (테스트에서 쓴다).
+    """
+    value = os.environ["WALK_TABLE_PATH"] if "WALK_TABLE_PATH" in os.environ else _read("WALK_TABLE_PATH")
+    if not value:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else (BE_DIR / path).resolve()
+
+
+@lru_cache
+def load_walk_table() -> tuple[tuple[str, str, float], ...]:
+    """(property_id, building, walk_min) 목록. pipeline.build_walk_table 이 만든 CSV."""
+    path = _walk_table_path()
+    if path is None:
+        return ()
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return tuple(
+            (r["property_id"], r["building"], float(r["walk_min"]))
+            for r in csv.DictReader(f)
+            if r.get("walk_min")
+        )
+
+
+def load_travel_times(properties) -> dict[str, dict[str, float]]:
+    """매물 ID → 건물 이름 → 도보시간(분). 매물 CSV 의 spot1~4 에 도보시간 표를 더한다."""
+    table: dict[str, dict[str, float]] = {}
+    for p in properties:
+        row = table.setdefault(p.property_id, {})
+        for i in range(1, 5):
+            name, walk = getattr(p, f"spot{i}_name"), getattr(p, f"spot{i}_walk_min")
+            if name is not None and walk is not None:
+                row[name] = walk
+    for pid, building, walk in load_walk_table():
+        if pid in table:
+            table[pid][building] = walk
+    return table

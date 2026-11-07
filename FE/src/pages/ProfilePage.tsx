@@ -14,7 +14,9 @@ import { checkForm, formSignature, toForm, toProfile, type FormState } from '../
 import { getUniversityLabel } from '../constants/universities'
 import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
+import { API_URL } from '../services/api'
 import { getProperties } from '../services/propertyService'
+import { getBuildings, type BuildingCoverage } from '../services/recommendService'
 import type { Property } from '../types/property'
 import { missingForRecommend } from '../utils/profile'
 import { getSpotNames } from '../utils/walk'
@@ -53,7 +55,32 @@ export function ProfilePage() {
   // 건물 선택지는 하드코딩하지 않고 매물 데이터의 강의동 이름에서 뽑는다.
   const spotNames = useMemo(() => getSpotNames(universityProperties), [universityProperties])
 
-  const check = checkForm(form, spotNames)
+  // 시간표 건물: BE 도보시간 표가 있으면 그 건물 목록(일부 매물만 계산된 건물 포함), 없으면 매물 데이터의 강의동
+  const [apiBuildings, setApiBuildings] = useState<BuildingCoverage[] | null>(null)
+  useEffect(() => {
+    if (API_URL === null) return
+    const ctrl = new AbortController()
+    getBuildings(ctrl.signal)
+      .then(setApiBuildings)
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [])
+  // 매물의 1/4 이상에 도보시간이 있는 건물만 고르게 한다. 그보다 적은 건물(예전 표본에서만 계산된 건물)을 고르면
+  // 대부분의 매물이 추천에서 빠지기 때문이다. 계산이 늘면 자동으로 목록에 들어온다.
+  const MIN_COVERAGE = 0.25
+  const ttBuildings = useMemo(
+    () => apiBuildings?.filter((b) => b.covered / b.total >= MIN_COVERAGE).map((b) => b.name) ?? spotNames,
+    [apiBuildings, spotNames],
+  )
+  const ttNotes = useMemo(
+    () =>
+      Object.fromEntries(
+        (apiBuildings ?? []).filter((b) => b.covered < b.total).map((b) => [b.name, `매물 ${b.covered}/${b.total}곳`]),
+      ),
+    [apiBuildings],
+  )
+
+  const check = checkForm(form, spotNames, ttBuildings)
   const savedForm = useMemo(() => toForm(profile), [profile])
   const dirty = !isSaved || formSignature(form) !== formSignature(savedForm)
   // 저장된 값 기준으로 추천에 빠진 입력
@@ -123,7 +150,8 @@ export function ProfilePage() {
           rows={form.timetable}
           onRowsChange={(timetable) => patch({ timetable })}
           rowErrors={check.rowErrors}
-          buildings={spotNames}
+          buildings={ttBuildings}
+          buildingNotes={ttNotes}
         />
 
         <PlacesSection step={6} rows={form.places} onRowsChange={(places) => patch({ places })} />

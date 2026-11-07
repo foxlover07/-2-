@@ -30,6 +30,17 @@ export function toRecommendRequest(p: Profile): RecommendRequest {
   }
 }
 
+export interface BuildingCoverage {
+  name: string
+  covered: number // 도보시간이 있는 매물 수
+  total: number
+}
+
+/** 시간표에 고를 수 있는 건물 (BE GET /recommend/buildings). 도보시간이 있는 매물이 많은 순. */
+export function getBuildings(signal?: AbortSignal): Promise<BuildingCoverage[]> {
+  return apiFetch<BuildingCoverage[]>('/recommend/buildings', { signal })
+}
+
 export function recommend(req: RecommendRequest, signal?: AbortSignal): Promise<RecommendResult> {
   return apiFetch<RecommendResult>('/recommend', { method: 'POST', body: JSON.stringify(req), signal })
 }

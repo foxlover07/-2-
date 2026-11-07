@@ -7,13 +7,16 @@ import os
 
 import pytest
 
-from app.data import DEFAULT_CSV_PATH, load_properties
+from app.data import DEFAULT_CSV_PATH, load_properties, load_walk_table
 
 os.environ["DATA_CSV_PATH"] = str(DEFAULT_CSV_PATH)
+os.environ["WALK_TABLE_PATH"] = ""  # 빈 값 = 도보시간 표 없음 (spot1~4 만)
 
 
 @pytest.fixture(autouse=True)
 def _fresh_property_cache():
     load_properties.cache_clear()
+    load_walk_table.cache_clear()
     yield
     load_properties.cache_clear()
+    load_walk_table.cache_clear()

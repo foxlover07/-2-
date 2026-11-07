@@ -11,9 +11,11 @@ interface TimetableSectionProps {
   onRowsChange: (rows: TimetableRow[]) => void
   rowErrors: Record<number, string>
   buildings: string[]
+  // 건물별 안내 (예: 일부 매물만 도보시간이 있는 건물)
+  buildingNotes?: Record<string, string>
 }
 
-export function TimetableSection({ step, rows, onRowsChange, rowErrors, buildings }: TimetableSectionProps) {
+export function TimetableSection({ step, rows, onRowsChange, rowErrors, buildings, buildingNotes = {} }: TimetableSectionProps) {
   const update = (id: number, patch: Partial<TimetableRow>) =>
     onRowsChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   const remove = (id: number) => onRowsChange(rows.filter((r) => r.id !== id))
@@ -116,7 +118,7 @@ export function TimetableSection({ step, rows, onRowsChange, rowErrors, building
                       )}
                       {buildings.map((b) => (
                         <option key={b} value={b}>
-                          {b}
+                          {buildingNotes[b] ? `${b} (${buildingNotes[b]})` : b}
                         </option>
                       ))}
                     </Select>
@@ -152,6 +154,12 @@ export function TimetableSection({ step, rows, onRowsChange, rowErrors, building
           <CalendarDays className="size-3.5" aria-hidden />주 {dayCount}일 · 수업 {rows.length}개
         </p>
       </div>
+      {Object.keys(buildingNotes).length > 0 && (
+        <p className="mt-2 text-xs text-muted">
+          괄호 안 숫자는 도보시간이 계산된 매물 수입니다. 일부 매물만 계산된 건물을 고르면, 그 건물까지 도보시간이 없는 매물은
+          추천에서 빠집니다 (계산은 순서대로 늘리는 중).
+        </p>
+      )}
     </SectionCard>
   )
 }
