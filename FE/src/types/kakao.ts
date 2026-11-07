@@ -22,6 +22,12 @@ export interface KakaoCustomOverlay {
   setZIndex(zIndex: number): void
 }
 
+// 마커 클러스터러 (libraries=clusterer). Marker 와 CustomOverlay 를 모두 받는다.
+export interface KakaoMarkerClusterer {
+  addMarkers(markers: KakaoCustomOverlay[], nodraw?: boolean): void
+  clear(): void
+}
+
 export interface KakaoAddressResult {
   x: string
   y: string
@@ -50,6 +56,13 @@ export interface KakaoNamespace {
       zIndex?: number
       clickable?: boolean
     }) => KakaoCustomOverlay
+    MarkerClusterer?: new (options: {
+      map: KakaoMapInstance
+      averageCenter?: boolean
+      minLevel?: number
+      gridSize?: number
+      minClusterSize?: number
+    }) => KakaoMarkerClusterer
     services: {
       Geocoder: new () => {
         addressSearch(address: string, callback: (result: KakaoAddressResult[], status: KakaoStatus) => void): void

@@ -59,11 +59,11 @@ export function BudgetSection({
   const sliderBudget = Math.min(BUDGET_SLIDER_MAX, Math.max(BUDGET_SLIDER_MIN, budget ?? BUDGET_SLIDER_MIN))
 
   return (
-    <SectionCard step={step} title="예산" description="조건에 맞는 매물을 먼저 거르는 데만 쓰고, 추천 점수에는 쓰지 않습니다">
-      <p className="mb-2 text-sm font-medium text-text">월 주거비 예산 (필수)</p>
+    <SectionCard step={step} title="예산 (1차 필터)" description="두 값을 넘는 매물은 추천에서 제외합니다 · 추천 점수에는 쓰지 않습니다">
+      <p className="mb-2 text-sm font-medium text-text">유지비 상한 (월세 + 관리비, 필수)</p>
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <ManwonInput
-          label="월 주거비 예산"
+          label="유지비 상한"
           value={budgetText}
           invalid={budgetError !== null}
           placeholder="예산 미설정"
@@ -73,7 +73,7 @@ export function BudgetSection({
         <div className="min-w-48 flex-1">
           <input
             type="range"
-            aria-label="월 주거비 예산 슬라이더"
+            aria-label="유지비 상한 슬라이더"
             min={BUDGET_SLIDER_MIN}
             max={BUDGET_SLIDER_MAX}
             value={sliderBudget}
@@ -88,12 +88,12 @@ export function BudgetSection({
       </div>
       <p className={budgetError ? 'mt-2 text-xs text-red' : 'mt-2 text-xs text-muted'}>
         {budgetError ??
-          '월 고정 주거비(월세 + 관리비)가 예산을 넘는 매물은 추천에서 제외합니다. 관리비 정보가 없는 매물도 지금은 제외됩니다.'}
+          '월세 + 관리비가 상한을 넘는 매물은 제외합니다. 관리비 정보가 없는 매물도 지금은 제외됩니다.'}
       </p>
 
-      <p className="mt-6 mb-2 text-sm font-medium text-text">보증금 예산 (선택)</p>
+      <p className="mt-6 mb-2 text-sm font-medium text-text">보증금 상한 (선택)</p>
       <ManwonInput
-        label="보증금 예산"
+        label="보증금 상한"
         value={depositText}
         invalid={depositError !== null}
         placeholder="미설정"
@@ -102,7 +102,7 @@ export function BudgetSection({
       />
       <p className={depositError ? 'mt-2 text-xs text-red' : 'mt-2 text-xs text-muted'}>
         {depositError ??
-          '보증금이 예산을 넘는 매물은 제외합니다. 비워 두면 보증금은 보지 않습니다.'}
+          '보증금이 상한을 넘는 매물은 제외합니다. 비워 두면 보증금은 보지 않습니다.'}
       </p>
     </SectionCard>
   )

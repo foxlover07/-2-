@@ -26,8 +26,8 @@ export function TimetableSection({ step, rows, onRowsChange, rowErrors, building
   return (
     <SectionCard
       step={step}
-      title="시간표 (선택)"
-      description="요일·시간·강의 건물 · 요일별 첫 수업 건물과 마지막 수업 건물까지의 도보시간이 이동시간 점수에 들어갑니다"
+      title="시간표"
+      description="주간 통학·공강 귀가·1교시 계산에 쓰입니다 · 없으면 주간 통학만 학과 건물로 추정하고, 공강·1교시는 계산하지 않습니다"
     >
       {/* 캡처 불러오기: Vision LLM 연결 전이라 자리만 둔다 */}
       <div
@@ -63,7 +63,7 @@ export function TimetableSection({ step, rows, onRowsChange, rowErrors, building
             {rows.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted">
-                  아직 입력한 수업이 없습니다. 시간표가 없으면 학과 건물만으로 이동시간을 계산합니다.
+                  아직 입력한 수업이 없습니다. 시간표가 없으면 주간 통학만 학과 건물로 추정합니다.
                 </td>
               </tr>
             )}

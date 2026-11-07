@@ -3,10 +3,11 @@ import { Link } from 'react-router'
 import { Check, Save } from 'lucide-react'
 import { Button } from '../components/common'
 import { PageContainer } from '../components/layout/PageContainer'
+import { AnswersSection } from '../components/profile/AnswersSection'
 import { BudgetSection } from '../components/profile/BudgetSection'
+import { CategorySection } from '../components/profile/CategorySection'
 import { DepartmentSection } from '../components/profile/DepartmentSection'
 import { PlacesSection } from '../components/profile/PlacesSection'
-import { PrioritySection } from '../components/profile/PrioritySection'
 import { SimpleSettingsSection } from '../components/profile/SimpleSettingsSection'
 import { TimetableSection } from '../components/profile/TimetableSection'
 import { checkForm, formSignature, toForm, toProfile, type FormState } from '../components/profile/profileForm'
@@ -80,7 +81,7 @@ export function ProfilePage() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-xl font-bold text-navy md:text-2xl">생활 프로필</h1>
-          <p className="mt-1.5 text-sm text-muted">학과·예산·우선순위를 입력하면 조건 기반 추천에 반영됩니다.</p>
+          <p className="mt-1.5 text-sm text-muted">예산으로 매물을 거른 뒤, 고른 3가지 기준으로 순위를 매깁니다.</p>
         </div>
         <p className="text-xs text-muted">마지막 저장: {formatSavedAt(profile.savedAt)}</p>
       </div>
@@ -92,7 +93,6 @@ export function ProfilePage() {
           customDepartment={form.customDepartment}
           departmentBuildings={form.departmentBuildings}
           grade={form.grade}
-          desiredCommuteMin={form.desiredCommuteMin}
           buildings={spotNames}
           error={check.departmentError}
           onChange={patch}
@@ -108,20 +108,28 @@ export function ProfilePage() {
           onChange={patch}
         />
 
-        <PrioritySection step={3} priorities={form.priorities} onChange={(priorities) => patch({ priorities })} />
+        <CategorySection step={3} selected={form.categories} onChange={(categories) => patch({ categories })} />
+
+        <AnswersSection
+          step={4}
+          categories={form.categories}
+          answers={form.answers}
+          hasTimetable={form.timetable.length > 0}
+          onChange={(answers) => patch({ answers })}
+        />
 
         <TimetableSection
-          step={4}
+          step={5}
           rows={form.timetable}
           onRowsChange={(timetable) => patch({ timetable })}
           rowErrors={check.rowErrors}
           buildings={spotNames}
         />
 
-        <PlacesSection step={5} rows={form.places} onRowsChange={(places) => patch({ places })} />
+        <PlacesSection step={6} rows={form.places} onRowsChange={(places) => patch({ places })} />
 
         <SimpleSettingsSection
-          step={6}
+          step={7}
           loading={all === null}
           universityLabel={getUniversityLabel(university)}
           spotNames={spotNames}

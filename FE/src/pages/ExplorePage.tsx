@@ -7,6 +7,7 @@ import { PropertyList } from '../components/explore/PropertyList'
 import { MapView, type LocationStatus } from '../components/map/MapView'
 import { getUniversityLabel } from '../constants/universities'
 import { useCompare } from '../contexts/CompareContext'
+import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { getProperties } from '../services/propertyService'
 import type { Property } from '../types/property'
@@ -62,7 +63,13 @@ interface ExploreViewProps {
 }
 
 function ExploreView({ university, load, properties, listPaddingBottom }: ExploreViewProps) {
-  const [filters, setFilters] = useState(EMPTY_FILTERS)
+  // 생활 프로필의 유지비·보증금 상한을 기본값으로 쓴다 (초기화하면 조건 없음).
+  const { profile } = useProfile()
+  const [filters, setFilters] = useState(() => ({
+    ...EMPTY_FILTERS,
+    costMax: profile.budgetManwon,
+    depositMax: profile.depositBudgetManwon,
+  }))
   const [sortKey, setSortKey] = useState<SortKey>('cost')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [locationStatus, setLocationStatus] = useState<Record<string, LocationStatus>>({})

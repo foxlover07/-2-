@@ -1,4 +1,4 @@
-// 추천 v2(BE app/scoring.py, app/scoring_config.py)와 똑같이 맞춰야 하는 상수.
+// 추천(BE app/categories.py, app/scoring_config.py)과 똑같이 맞춰야 하는 상수.
 // BE 값이 바뀌면 이 파일만 고친다.
 
 export const DAYS = ['월', '화', '수', '목', '금', '토', '일'] as const
@@ -15,7 +15,7 @@ export function isLateNight(hhmm: string): boolean {
   return hhmm >= LATE_NIGHT_FROM || hhmm < LATE_NIGHT_UNTIL
 }
 
-// 자주 가는 지역. 추천 v2 10장 7단계(자주 가는 곳 + 대중교통 추정) 전까지는 저장만 하고 계산에 쓰지 않는다.
+// 자주 가는 지역. '자주 가는 곳' 카테고리 데이터가 준비되기 전까지는 저장만 하고 계산에 쓰지 않는다.
 export const EWHA_AREAS = [
   '이대역',
   '신촌역',
@@ -41,35 +41,41 @@ export type PlaceKind = (typeof PLACE_KINDS)[number]['value']
 export const VISITS_MIN = 1
 export const VISITS_MAX = 14
 
-// ---------------------------------------------------------------- 추천 v2
+// ---------------------------------------------------------------- 추천 v3 (BE app/categories.py)
 
-// 요소 (scoring.FACTORS / FACTOR_LABELS). 순서는 화면 표시 순서.
-export const FACTORS = [
-  { key: 'travel', label: '이동시간', description: '학과 건물 · 시간표 건물까지 도보 (편도)' },
-  { key: 'transit', label: '교통 편의성', description: '가장 가까운 지하철역까지 도보' },
-  { key: 'cost', label: '주거비', description: '월세 + 관리비 · 예산 안 매물끼리 비교' },
+// 카테고리 9개. 사용자가 1~3개를 순서대로 고른다. ready=false 는 데이터 준비 중 (골라도 점수 없음, 비중은 나머지에 분배).
+export const CATEGORIES = [
+  { key: 'weekly_commute', no: 1, group: '동선', label: '주간 총 통학 시간', short: '주간 통학', description: '요일별 첫·마지막 수업 건물 ↔ 집, 일주일 치 합산', ready: true },
+  { key: 'gap_home', no: 2, group: '동선', label: '공강 귀가 가능 여부', short: '공강 귀가', description: '공강 > 왕복 + 쉬는 시간인 공강 비율', ready: true },
+  { key: 'frequent_places', no: 3, group: '동선', label: '자주 가는 곳까지 거리', short: '자주 가는 곳', description: '알바·헬스장·본가 가는 역 등 × 주간 횟수', ready: false },
+  { key: 'late_return', no: 4, group: '동선', label: '심야 귀가 동선', short: '심야 귀가', description: '늦게 끝나는 일정 → 집 도보 시간 (안전시설은 표시만)', ready: false },
+  { key: 'first_class', no: 5, group: '동선', label: '1교시 부담', short: '1교시', description: '9시 수업 날 집에서 나와야 하는 시각', ready: true },
+  { key: 'uphill', no: 6, group: '동선', label: '오르막 부담', short: '오르막', description: '매물 → 강의 건물 고도차', ready: false },
+  { key: 'amenities', no: 7, group: '생활 환경', label: '생활 편의시설', short: '편의시설', description: '편의점·마트·코인세탁소·병원 거리', ready: false },
+  { key: 'quietness', no: 8, group: '생활 환경', label: '조용함 vs 번화함', short: '조용함', description: '반경 내 술집·유흥시설 수', ready: false },
+  { key: 'rhythm', no: 9, group: '생활 환경', label: '생활 리듬', short: '생활 리듬', description: '아침형·야행성과 늦게 여는 시설', ready: false },
 ] as const
-export type Factor = (typeof FACTORS)[number]['key']
-export type Priorities = [Factor, Factor]
+export type CategoryKey = (typeof CATEGORIES)[number]['key']
 
-export const DEFAULT_PRIORITIES: Priorities = ['travel', 'cost']
+export const MAX_CATEGORIES = 3
+export const DEFAULT_CATEGORIES: CategoryKey[] = ['weekly_commute', 'gap_home', 'first_class']
 
-// 데이터가 아직 없어 BE 가 계산하지 못하는 요소 (고르면 비중이 나머지 요소에 나눠진다)
-export const DATA_PENDING_FACTORS: readonly Factor[] = ['transit']
-
-export function factorLabel(key: string): string {
-  return FACTORS.find((f) => f.key === key)?.label ?? key
+export function categoryInfo(key: string) {
+  return CATEGORIES.find((c) => c.key === key)
 }
 
-// 1·2·3순위 가중치 (scoring_config.weight_rank1~3) — 화면 안내용
+// 1·2·3순위 가중치 (scoring_config.weight_rank1~3) — 화면 안내용. 사용자에게 받지 않는다.
 export const RANK_WEIGHTS = [0.55, 0.3, 0.15] as const
 
-// 이동시간 세부 부분 (scoring.TRAVEL_PART_LABELS)
-export const TRAVEL_PART_LABELS: Record<string, string> = {
-  department: '학과 건물',
-  frequent: '자주 가는 곳',
-  timetable: '시간표',
-}
+// 고른 카테고리의 질문 (BE categories.Answers 기본값과 같게)
+export const ANSWER_FIELDS = {
+  weekly_commute: { field: 'weeklyCommuteTargetMin', question: '일주일 통학, 어느 정도면 괜찮아요? (도보 기준)', help: '이 시간 안이면 완만하게, 넘으면 점수가 빠르게 줄어듭니다', unit: '분', prefix: '주 ', min: 30, max: 600, step: 10, default: 150, example: '월·수 9시 공과대학, 목 10시 30분 학관 · 일주일 150분 이내면 괜찮아요' },
+  gap_home: { field: 'gapRestMin', question: '공강에 집에서 최소 얼마나 쉬어야 다녀올 만한가요?', help: '공강 > 건물→집 + 쉬는 시간 + 집→다음 건물이면 "귀가 가능"으로 셉니다 · 시간표 필요', unit: '분', prefix: '', min: 0, max: 120, step: 10, default: 30, example: '30분 — 1시간 30분 공강이면 집에서 30분은 쉴 수 있어야 해요' },
+  first_class: { field: 'firstClassBufferMin', question: '9시 수업 전, 도착 여유는 몇 분이면 좋아요?', help: '9시까지 시작하는 수업이 있는 날 "몇 시에 나가야 하는지"로 계산합니다 · 시간표 필요', unit: '분', prefix: '', min: 0, max: 60, step: 5, default: 10, example: '10분 — 강의실에 8시 50분까지 도착하고 싶어요' },
+} as const
+export type AnswerField = (typeof ANSWER_FIELDS)[keyof typeof ANSWER_FIELDS]['field']
+export type Answers = Record<AnswerField, number>
+export const DEFAULT_ANSWERS: Answers = { weeklyCommuteTargetMin: 150, gapRestMin: 30, firstClassBufferMin: 10 }
 
 // 학과 → 학과 건물 (scoring_config.DEPARTMENT_BUILDINGS).
 // ⚠️ BE 와 같은 예시값, 팀 확인 필요. 목록에 없는 학과는 건물을 직접 고른다.
@@ -82,11 +88,5 @@ export const DEPARTMENTS = Object.keys(DEPARTMENT_BUILDINGS)
 
 // 학년 (BE 는 1 이상만 검사. 화면 선택지는 1~5)
 export const GRADES = [1, 2, 3, 4, 5] as const
-
-// 희망 통학 시간 (편도, 도보 기준, 분). BE 는 0 초과만 검사.
-export const COMMUTE_DEFAULT = 15
-export const COMMUTE_MIN = 5
-export const COMMUTE_MAX = 60
-export const COMMUTE_STEP = 5
 
 // 예산·보증금 예산은 1차 필터로만 쓰고 점수에는 쓰지 않는다 (BE scoring_config, 2026-11-08 결정: 여유 0)

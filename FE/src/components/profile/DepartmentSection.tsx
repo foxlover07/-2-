@@ -1,15 +1,7 @@
-import { CircleAlert, Footprints } from 'lucide-react'
-import {
-  COMMUTE_MAX,
-  COMMUTE_MIN,
-  COMMUTE_STEP,
-  DEPARTMENT_BUILDINGS,
-  DEPARTMENTS,
-  GRADES,
-} from '../../constants/recommend'
+import { CircleAlert } from 'lucide-react'
+import { DEPARTMENT_BUILDINGS, DEPARTMENTS, GRADES } from '../../constants/recommend'
 import { Badge, Chip, Select } from '../common'
 import { SectionCard } from './SectionCard'
-import { Stepper } from './Stepper'
 import { CUSTOM_DEPARTMENT, TIME_INPUT } from './profileForm'
 
 interface DepartmentSectionProps {
@@ -18,7 +10,6 @@ interface DepartmentSectionProps {
   customDepartment: string
   departmentBuildings: string[]
   grade: number | null
-  desiredCommuteMin: number
   buildings: string[] // 매물 데이터의 강의동 이름 (도보시간이 있는 건물만 고를 수 있다)
   error: string | null
   onChange: (patch: {
@@ -26,7 +17,6 @@ interface DepartmentSectionProps {
     customDepartment?: string
     departmentBuildings?: string[]
     grade?: number | null
-    desiredCommuteMin?: number
   }) => void
 }
 
@@ -36,7 +26,6 @@ export function DepartmentSection({
   customDepartment,
   departmentBuildings,
   grade,
-  desiredCommuteMin,
   buildings,
   error,
   onChange,
@@ -57,8 +46,8 @@ export function DepartmentSection({
   return (
     <SectionCard
       step={step}
-      title="학과 · 희망 통학 시간"
-      description="학과 건물까지의 도보시간이 이동시간 점수에 가장 크게 반영됩니다"
+      title="기본 정보"
+      description="학과 건물은 시간표를 입력하지 않았을 때 주간 통학 시간을 추정하는 데 쓰입니다"
     >
       <div className="grid gap-4 sm:grid-cols-[1fr_1fr_8rem]">
         <label className="flex flex-col gap-1.5 text-xs text-muted">
@@ -132,26 +121,6 @@ export function DepartmentSection({
         </p>
       )}
 
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-control bg-bg px-4 py-3">
-        <div className="min-w-0">
-          <p className="flex items-center gap-1.5 text-sm font-medium text-text">
-            <Footprints className="size-4 text-blue" aria-hidden />
-            희망 통학 시간 (편도, 도보 기준)
-          </p>
-          <p className="text-xs text-muted">
-            이 시간 안이면 완만하게, 넘으면 10분마다 점수가 절반으로 줄어듭니다. {COMMUTE_MIN}~{COMMUTE_MAX}분
-          </p>
-        </div>
-        <Stepper
-          label="희망 통학 시간"
-          value={desiredCommuteMin}
-          min={COMMUTE_MIN}
-          max={COMMUTE_MAX}
-          step={COMMUTE_STEP}
-          unit="분"
-          onChange={(desiredCommuteMin) => onChange({ desiredCommuteMin })}
-        />
-      </div>
     </SectionCard>
   )
 }

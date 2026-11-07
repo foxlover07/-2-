@@ -1,5 +1,5 @@
 // 생활 프로필 편집 폼 상태 ↔ 저장값(Profile) 변환과 검증. 화면 컴포넌트는 이 파일만 쓴다.
-import { DEPARTMENTS, TIME_RE, type Area, type Day, type PlaceKind, type Priorities } from '../../constants/recommend'
+import { DEPARTMENTS, TIME_RE, type Answers, type Area, type CategoryKey, type Day, type PlaceKind } from '../../constants/recommend'
 import type { ClassSlot, FrequentPlace, Profile } from '../../utils/profile'
 import type { SpotVisits } from '../../utils/walk'
 
@@ -34,10 +34,10 @@ export interface FormState {
   customDepartment: string
   departmentBuildings: string[]
   grade: number | null
-  desiredCommuteMin: number
   budgetText: string
   depositText: string
-  priorities: Priorities
+  categories: CategoryKey[]
+  answers: Answers
   timetable: TimetableRow[]
   places: PlaceRow[]
   visits: SpotVisits
@@ -50,10 +50,10 @@ export function toForm(p: Profile): FormState {
     customDepartment: known ? '' : p.department,
     departmentBuildings: p.departmentBuildings,
     grade: p.grade,
-    desiredCommuteMin: p.desiredCommuteMin,
     budgetText: p.budgetManwon === null ? '' : String(p.budgetManwon),
     depositText: p.depositBudgetManwon === null ? '' : String(p.depositBudgetManwon),
-    priorities: p.priorities,
+    categories: p.categories,
+    answers: p.answers,
     timetable: p.timetable.map((s) => ({ id: newRowId(), ...s })),
     places: p.places.map((pl) => ({
       id: newRowId(),
@@ -148,10 +148,10 @@ export function toProfile(form: FormState, check: FormCheck, spotNames: string[]
     department: departmentName(form),
     departmentBuildings: form.departmentBuildings,
     grade: form.grade,
-    desiredCommuteMin: form.desiredCommuteMin,
     budgetManwon: check.budget ?? null,
     depositBudgetManwon: check.deposit ?? null,
-    priorities: form.priorities,
+    categories: form.categories,
+    answers: form.answers,
     timetable,
     places,
     visits,
