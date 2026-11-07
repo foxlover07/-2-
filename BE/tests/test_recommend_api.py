@@ -1,4 +1,4 @@
-"""5단계: POST /recommend v2 입력·출력."""
+"""5단계: POST /recommend/v2 (설계안 v2, 비교용) 입력·출력."""
 
 from fastapi.testclient import TestClient
 
@@ -21,7 +21,7 @@ BODY = {
 
 
 def post(**overrides):
-    return client.post("/recommend", json={**BODY, **overrides})
+    return client.post("/recommend/v2", json={**BODY, **overrides})
 
 
 def test_recommend_returns_v2_shape():
@@ -51,7 +51,7 @@ def test_budget_filter_reasons_in_response():
 
 def test_optional_inputs_can_be_omitted():
     body = {k: v for k, v in BODY.items() if k not in ("deposit_budget_manwon", "timetable")}
-    res = client.post("/recommend", json=body)
+    res = client.post("/recommend/v2", json=body)
     assert res.status_code == 200
     assert set(res.json()["ranked"][0]["travel_parts"]) == {"department"}
 
@@ -83,7 +83,7 @@ def test_validation_errors_are_422():
     assert post(department="없는학과").status_code == 422
     assert post(timetable=[{"day": "월", "start": "9:00", "end": "10:00", "building": "ECC"}]).status_code == 422
     required = {k: v for k, v in BODY.items() if k != "budget_manwon"}
-    assert client.post("/recommend", json=required).status_code == 422
+    assert client.post("/recommend/v2", json=required).status_code == 422
 
 
 def test_unknown_building_is_422_with_message():
@@ -94,5 +94,5 @@ def test_unknown_building_is_422_with_message():
 
 def test_v1_body_and_student_endpoint_are_gone():
     # 중요도 1~5 · 방문 횟수(v1) 모양은 더 이상 받지 않는다
-    assert client.post("/recommend", json={"visits": {"ECC": 3}, "cost_importance": 3}).status_code == 422
+    assert client.post("/recommend/v2", json={"visits": {"ECC": 3}, "cost_importance": 3}).status_code == 422
     assert client.post("/recommend/student", json={}).status_code == 404
