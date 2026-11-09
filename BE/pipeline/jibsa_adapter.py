@@ -183,9 +183,15 @@ def write(rows: list[dict], out_dir: Path = STAGING_DIR, name: str = "jibsa_list
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) < 3:
-        raise SystemExit("사용: python -m pipeline.jibsa_adapter <출력이름> <run 폴더> [...]")
-    rows = build([RAW_ROOT / name for name in sys.argv[2:]])
-    path = write(rows, name=sys.argv[1])
+    from pipeline import universities
+
+    # --univ=korea 처럼 주면 university 열을 그 대학으로 쓴다 (기본 ewha)
+    args = [a for a in sys.argv[1:] if not a.startswith("--univ=")]
+    univ = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--univ=")), universities.DEFAULT)
+    UNIVERSITY = universities.get(univ)["name"]
+    if len(args) < 2:
+        raise SystemExit("사용: python -m pipeline.jibsa_adapter [--univ=korea] <출력이름> <run 폴더> [...]")
+    rows = build([RAW_ROOT / name for name in args[1:]])
+    path = write(rows, name=args[0])
     print(path)
     print(json.dumps(quality_report(rows), ensure_ascii=False, indent=2))

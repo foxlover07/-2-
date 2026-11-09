@@ -70,11 +70,68 @@ def _v2_zigbang_ewha9() -> list[tuple[str, list[str]]]:
 # 이화여대 서쪽·남쪽으로 붙은 마포구 법정동 (이대역·신촌역 생활권)
 MAPO_DONGS = ["노고산동", "염리동", "대흥동"]
 
-# 이어 받기(--next) 할 계획과 동마다 최대 페이지 수
-PAGINATED_PLANS = {"v2_zigbang_ewha9"}
-MAX_PAGES = 4
+# v3 바깥 고리 (2026-11-09, 개발용 PoC·비배포 전제로 확대 승인): 캠퍼스 직선 약 2.5km 안쪽 법정동.
+# 도보 경로는 route_batch --max-km 2 로 다시 거른다 (먼 동은 수집만 되고 경로·후보에서 빠진다).
+RING_DONGS = {
+    "서대문구": ["연희동", "충정로2가", "충정로3가", "합동", "미근동", "냉천동", "천연동"],
+    "마포구": ["아현동", "공덕동", "신수동", "창전동", "구수동", "현석동", "상수동",
+              "서교동", "동교동", "연남동", "도화동"],
+}
 
-PLANS = {"v0_pilot": _v0_pilot, "v1_ewha6": _v1_ewha6, "v2_zigbang_ewha9": _v2_zigbang_ewha9}
+
+def _v3_zigbang_ring() -> list[tuple[str, list[str]]]:
+    """직방 확대 (2026-11-09): v2 의 9개 동 바깥 고리. v2 와 같은 조건(월세·원룸 검색, 50건씩 이어 받기)."""
+    return [
+        (f"zigbang:{dong}", ["zigbang", "search", "listings", "room", f"{gu} {dong}", "--trade", "월세", "--limit", "50"])
+        for gu, dongs in RING_DONGS.items() for dong in dongs
+    ]
+
+
+# 고려대(안암) 주변 (2026-11-09). 직방은 '안암동'·'보문동'처럼 가(街)를 묶은 이름도 받는다 (안암동1~5가 한 번에).
+# 도보 경로는 route_batch --univ korea --max-km 2 로 다시 거른다.
+KOREA_DONGS = {
+    "성북구": ["안암동", "종암동", "보문동", "동선동", "삼선동", "하월곡동"],
+    "동대문구": ["제기동", "용두동", "신설동", "청량리동", "회기동"],
+}
+
+
+def _zigbang_dongs(dongs_by_gu: dict[str, list[str]]) -> list[tuple[str, list[str]]]:
+    """직방 월세·원룸 검색, 50건씩 이어 받기 (이대 v2·v3 와 같은 조건)."""
+    return [
+        (f"zigbang:{dong}", ["zigbang", "search", "listings", "room", f"{gu} {dong}", "--trade", "월세", "--limit", "50"])
+        for gu, dongs in dongs_by_gu.items() for dong in dongs
+    ]
+
+
+def _ku1_zigbang() -> list[tuple[str, list[str]]]:
+    """고려대 1차 (2026-11-09)."""
+    return _zigbang_dongs(KOREA_DONGS)
+
+
+# 서강대 (2026-11-09). 신수·노고산·대흥·염리·창전·현석·구수·상수·서교·동교·창천은 이대 v2·v3 수집에 이미 있어
+# 그 run 을 같이 쓰고, 서강대 쪽(서·남쪽)으로만 더 받는다.
+SOGANG_EXTRA_DONGS = {"마포구": ["용강동", "토정동", "마포동", "하중동", "신정동", "당인동", "합정동"]}
+
+# 서울과기대(공릉) 주변 (2026-11-09)
+SEOULTECH_DONGS = {"노원구": ["공릉동", "하계동", "월계동", "중계동"], "중랑구": ["묵동"]}
+
+
+def _sg1_zigbang() -> list[tuple[str, list[str]]]:
+    return _zigbang_dongs(SOGANG_EXTRA_DONGS)
+
+
+def _st1_zigbang() -> list[tuple[str, list[str]]]:
+    return _zigbang_dongs(SEOULTECH_DONGS)
+
+
+# 이어 받기(--next) 할 계획과 동마다 최대 페이지 수
+PAGINATED_PLANS = {"v2_zigbang_ewha9", "v3_zigbang_ring", "ku1_zigbang", "sg1_zigbang", "st1_zigbang"}
+MAX_PAGES = 6
+
+PLANS = {"v0_pilot": _v0_pilot, "v1_ewha6": _v1_ewha6, "v2_zigbang_ewha9": _v2_zigbang_ewha9,
+         "v3_zigbang_ring": _v3_zigbang_ring, "ku1_zigbang": _ku1_zigbang,
+         "sg1_zigbang": _sg1_zigbang, "st1_zigbang": _st1_zigbang}
+PURPOSE = {"ku": "고려대", "sg": "서강대", "st": "서울과기대"}
 
 
 def _now() -> str:
@@ -136,7 +193,7 @@ def collect(plan: str, only: list[str] | None = None) -> Path:
         "tool": "jibsa",
         "tool_version": version,
         "plan": plan,
-        "purpose": "dev: 이화여대 인근 매물 수집",
+        "purpose": f"dev: {PURPOSE.get(plan[:2], '이화여대')} 인근 매물 수집",
         "data_class": "development",
         "runs": runs,
     }

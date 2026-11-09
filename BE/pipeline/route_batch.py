@@ -7,7 +7,8 @@
 - 매물: --input (DB/ 기준 경로, property_id·address 열 필요). 기본 DB/poc_ewha.csv.
   주소를 Kakao 주소 검색(exact)으로 하나로 확정할 수 있는 매물만 쓴다.
 - 같은 주소의 매물은 경로가 같으므로 주소당 한 번만 조회하고 행은 매물마다 쓴다 (raw_file 공유).
-- 목적지: DB/ref/ewha_buildings.csv 의 building_poi (출입구 아님, entrance_verified=false).
+- 목적지: --univ 대학의 건물 참조 테이블(DB/ref/ewha_buildings.csv, korea_buildings.csv)의 building_poi
+  (출입구 아님, entrance_verified=false). 기본은 ewha.
 - 결과: DB/routes/routes_<입력파일이름>_<ts>.csv (긴 형식, CLAUDE.md §11 routes 구조) — 한 건씩 바로 쓴다.
   원본 응답: DB/raw/kakao/<ts>/ (로컬 개발용, 저장 정책 확인 전 커밋/공개 금지).
 - 실패(status != OK)는 시간 칸을 비우고 status 를 남긴다. HTTP 에러(429 등)면 즉시 멈춘다.
@@ -29,6 +30,7 @@ from pathlib import Path
 
 from app.config import REPO_ROOT, get_settings
 from app.tools.kakao import KakaoClient, LatLng, single_exact_match
+from pipeline import universities
 
 DB = REPO_ROOT / "DB"
 ROUTE_MODE = "BROAD_FIRST"
@@ -52,11 +54,11 @@ def _haversine_km(a: LatLng, b: LatLng) -> float:
 
 
 def main(input_rel: str, max_calls: int, only: set[str] | None,
-         destinations: set[str] | None = None, max_km: float | None = None) -> None:
+         destinations: set[str] | None = None, max_km: float | None = None, univ: str = universities.DEFAULT) -> None:
     # utf-8-sig: staging CSV 는 BOM 이 붙어 있다 (BOM 없는 파일도 그대로 읽는다)
     props = [r for r in csv.DictReader(open(DB / input_rel, encoding="utf-8-sig"))
              if not only or r["property_id"] in only]
-    buildings = [b for b in csv.DictReader(open(DB / "ref" / "ewha_buildings.csv", encoding="utf-8"))
+    buildings = [b for b in csv.DictReader(open(universities.ref_path(univ), encoding="utf-8"))
                  if b["point_role"] == "building_poi" and (not destinations or b["destination_id"] in destinations)]
     if destinations and len(buildings) != len(destinations):
         raise SystemExit(f"목적지 중 없는 ID: {destinations - {b['destination_id'] for b in buildings}}")
@@ -136,6 +138,7 @@ if __name__ == "__main__":
     ap.add_argument("--properties", default="")
     ap.add_argument("--destinations", default="")
     ap.add_argument("--max-km", type=float, default=None)
+    ap.add_argument("--univ", default=universities.DEFAULT, choices=list(universities.UNIVERSITIES))
     a = ap.parse_args()
     main(a.input, a.max_calls, set(a.properties.split(",")) - {""} or None,
-         set(a.destinations.split(",")) - {""} or None, a.max_km)
+         set(a.destinations.split(",")) - {""} or None, a.max_km, a.univ)
