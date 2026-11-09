@@ -17,13 +17,26 @@ NUMERIC_FIELDS = {
 }
 
 
-def _csv_path() -> Path:
-    """DATA_CSV_PATH (프로세스 환경 → BE/.env → BE/.env.local 순, config 와 같은 규칙). 상대 경로는 BE/ 기준."""
+def _paths(value: str) -> list[Path]:
+    """쉼표로 여러 파일을 줄 수 있다 (대학별 CSV). 상대 경로는 BE/ 기준."""
+    out = []
+    for part in value.split(","):
+        part = part.strip()
+        if part:
+            path = Path(part)
+            out.append(path if path.is_absolute() else (BE_DIR / path).resolve())
+    return out
+
+
+def _csv_paths() -> list[Path]:
+    """DATA_CSV_PATH (프로세스 환경 → BE/.env → BE/.env.local 순, config 와 같은 규칙). 쉼표로 여러 파일."""
     override = _read("DATA_CSV_PATH")
-    if not override:
-        return DEFAULT_CSV_PATH
-    path = Path(override)
-    return path if path.is_absolute() else (BE_DIR / path).resolve()
+    return _paths(override) if override else [DEFAULT_CSV_PATH]
+
+
+def _csv_path() -> Path:
+    """첫 번째 매물 CSV (예전 호출용)."""
+    return _csv_paths()[0]
 
 
 def _parse_row(row: dict[str, str]) -> Property:
@@ -41,8 +54,19 @@ def _parse_row(row: dict[str, str]) -> Property:
 
 @lru_cache
 def load_properties() -> tuple[Property, ...]:
-    with _csv_path().open(encoding="utf-8-sig", newline="") as f:
-        return tuple(_parse_row(row) for row in csv.DictReader(f))
+    """모든 매물 CSV 를 순서대로 읽는다. 매물 ID 가 겹치면 조용히 덮지 않고 멈춘다
+    (대학이 다른 같은 매물은 파이프라인이 ID 앞에 대학 키를 붙여 구분한다)."""
+    out: list[Property] = []
+    seen: dict[str, Path] = {}
+    for path in _csv_paths():
+        with path.open(encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                p = _parse_row(row)
+                if p.property_id in seen:
+                    raise ValueError(f"매물 ID 중복: {p.property_id} ({seen[p.property_id].name}, {path.name})")
+                seen[p.property_id] = path
+                out.append(p)
+    return tuple(out)
 
 
 def get_property(property_id: str) -> Property | None:
@@ -51,30 +75,29 @@ def get_property(property_id: str) -> Property | None:
 
 # ---------------------------------------------------------------- 매물 × 강의동 도보시간 (긴 형식, 선택)
 
-def _walk_table_path() -> Path | None:
-    """WALK_TABLE_PATH (DATA_CSV_PATH 와 같은 규칙). 없으면 매물 CSV 의 spot1~4 만 쓴다.
+def _walk_table_paths() -> list[Path]:
+    """WALK_TABLE_PATH (DATA_CSV_PATH 와 같은 규칙, 쉼표로 여러 파일). 없으면 매물 CSV 의 spot1~4 만 쓴다.
 
     프로세스 환경 변수에 빈 값으로 있으면 .env 파일 값과 상관없이 '표 없음'이다 (테스트에서 쓴다).
     """
     value = os.environ["WALK_TABLE_PATH"] if "WALK_TABLE_PATH" in os.environ else _read("WALK_TABLE_PATH")
-    if not value:
-        return None
-    path = Path(value)
-    return path if path.is_absolute() else (BE_DIR / path).resolve()
+    return _paths(value) if value else []
+
+
+def _walk_table_path() -> Path | None:
+    """첫 번째 도보시간 표 (예전 호출용)."""
+    paths = _walk_table_paths()
+    return paths[0] if paths else None
 
 
 @lru_cache
 def load_walk_table() -> tuple[tuple[str, str, float], ...]:
-    """(property_id, building, walk_min) 목록. pipeline.build_walk_table 이 만든 CSV."""
-    path = _walk_table_path()
-    if path is None:
-        return ()
-    with path.open(encoding="utf-8-sig", newline="") as f:
-        return tuple(
-            (r["property_id"], r["building"], float(r["walk_min"]))
-            for r in csv.DictReader(f)
-            if r.get("walk_min")
-        )
+    """(property_id, building, walk_min) 목록. pipeline.build_walk_table 이 만든 CSV (여러 개면 이어 붙인다)."""
+    rows: list[tuple[str, str, float]] = []
+    for path in _walk_table_paths():
+        with path.open(encoding="utf-8-sig", newline="") as f:
+            rows += [(r["property_id"], r["building"], float(r["walk_min"])) for r in csv.DictReader(f) if r.get("walk_min")]
+    return tuple(rows)
 
 
 def load_travel_times(properties) -> dict[str, dict[str, float]]:

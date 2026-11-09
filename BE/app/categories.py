@@ -88,6 +88,7 @@ class Answers(BaseModel):
 
 
 class RecommendV3Request(BaseModel):
+    university: Annotated[str, Field(min_length=1, description="이 대학 매물만 추천한다 (매물 CSV 의 university 값)")] = "이화여자대학교"
     upkeep_max_manwon: Annotated[float, Field(gt=0, description="유지비(월세 + 관리비) 상한, 만원")]
     deposit_max_manwon: Annotated[float | None, Field(ge=0, description="보증금 상한, 만원. 없으면 보증금 필터 생략")] = None
     department: Annotated[str, Field(min_length=1)]
@@ -287,8 +288,10 @@ def recommend_v3(
     cfg: ScoringConfig = CONFIG,
     cat: CategoryConfig = CAT_CONFIG,
 ) -> RecommendV3Result:
-    properties = list(properties)
+    # 고른 대학의 매물만 (다른 대학 매물·건물은 결과와 건물 이름 읽기에 섞지 않는다)
+    properties = [p for p in properties if p.university == req.university]
     travel = travel if travel is not None else travel_times_from_csv(properties)
+    travel = {p.property_id: travel.get(p.property_id, {}) for p in properties}
     notes: list[str] = []
     excluded: list[Excluded] = []
     picked = list(req.categories)
@@ -396,6 +399,7 @@ def recommend_v3(
         excluded=excluded,
         notes=notes,
         assumptions={
+            "university": req.university,
             "filters": {"upkeep_max_manwon": req.upkeep_max_manwon, "deposit_max_manwon": req.deposit_max_manwon},
             "weights_by_rank": dict(zip(picked, rank_w)),
             "weights_applied": weights,

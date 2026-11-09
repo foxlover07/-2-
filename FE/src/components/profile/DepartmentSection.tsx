@@ -11,6 +11,7 @@ interface DepartmentSectionProps {
   departmentBuildings: string[]
   grade: number | null
   buildings: string[] // 매물 데이터의 강의동 이름 (도보시간이 있는 건물만 고를 수 있다)
+  hasPresets: boolean // 학과 → 건물 예시표가 있는 대학인지 (지금은 이대만)
   error: string | null
   onChange: (patch: {
     departmentChoice?: string
@@ -27,11 +28,12 @@ export function DepartmentSection({
   departmentBuildings,
   grade,
   buildings,
+  hasPresets,
   error,
   onChange,
 }: DepartmentSectionProps) {
   const chooseDepartment = (choice: string) => {
-    const preset = DEPARTMENT_BUILDINGS[choice]
+    const preset = hasPresets ? DEPARTMENT_BUILDINGS[choice] : undefined
     // 목록에 있는 학과를 고르면 학과 건물을 자동으로 채운다 (사용자가 고칠 수 있다)
     onChange({ departmentChoice: choice, ...(preset ? { departmentBuildings: [...preset] } : {}) })
   }
@@ -41,7 +43,7 @@ export function DepartmentSection({
         ? departmentBuildings.filter((b) => b !== name)
         : [...departmentBuildings, name],
     })
-  const usesPreset = departmentChoice !== '' && departmentChoice !== CUSTOM_DEPARTMENT
+  const usesPreset = hasPresets && departmentChoice !== '' && departmentChoice !== CUSTOM_DEPARTMENT
 
   return (
     <SectionCard
@@ -54,12 +56,13 @@ export function DepartmentSection({
           학과
           <Select value={departmentChoice} onChange={(e) => chooseDepartment(e.target.value)}>
             <option value="">학과 선택</option>
-            {DEPARTMENTS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-            <option value={CUSTOM_DEPARTMENT}>목록에 없음 (직접 입력)</option>
+            {hasPresets &&
+              DEPARTMENTS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            <option value={CUSTOM_DEPARTMENT}>{hasPresets ? '목록에 없음 (직접 입력)' : '직접 입력'}</option>
           </Select>
         </label>
         {departmentChoice === CUSTOM_DEPARTMENT ? (

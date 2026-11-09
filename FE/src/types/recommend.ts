@@ -2,6 +2,7 @@
 import type { CategoryKey, Day } from '../constants/recommend'
 
 export interface RecommendRequest {
+  university: string // 이 대학 매물만 추천 (매물 데이터의 university 값)
   upkeep_max_manwon: number
   deposit_max_manwon: number | null
   department: string

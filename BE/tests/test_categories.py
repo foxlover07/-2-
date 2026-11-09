@@ -229,3 +229,25 @@ def test_recommend_reads_aliases_and_notes_them():
     assert r.ranked and r.weights["first_class"] > 0
     assert any("'포관'을(를) '이화·포스코관'" in n for n in r.notes)
     assert {"from": "공대", "to": "공과대학"} in r.assumptions["renamed_buildings"]
+
+
+# ---------------------------------------------------------------- 대학별 (2026-11-10)
+
+def test_recommend_only_uses_requested_university():
+    ku = [p.model_copy(update={"property_id": "ku:" + p.property_id, "university": "고려대학교",
+                               "spot1_name": "정경관"}) for p in PROPS]
+    r_ewha = recommend_v3(PROPS + ku, req(timetable=TT_POC()))
+    assert all(not x.property_id.startswith("ku:") for x in r_ewha.ranked + r_ewha.excluded)
+    r_ku = recommend_v3(PROPS + ku, req(university="고려대학교", department_buildings=["정경관"]))
+    assert r_ku.ranked and all(x.property_id.startswith("ku:") for x in r_ku.ranked + r_ku.excluded)
+    assert r_ku.assumptions["university"] == "고려대학교"
+
+
+def test_recommend_unknown_university_has_no_listings():
+    r = recommend_v3(PROPS, req(university="없는대학교"))
+    assert r.ranked == [] and r.excluded == []
+
+
+def test_api_buildings_filtered_by_university():
+    assert client.get("/recommend/buildings", params={"university": "고려대학교"}).json() == []
+    assert len(client.get("/recommend/buildings").json()) >= 4

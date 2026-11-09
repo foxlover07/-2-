@@ -3,6 +3,8 @@ import { Link } from 'react-router'
 import { Check, CircleAlert, Plus, Sparkles, TriangleAlert, UserRound } from 'lucide-react'
 import { categoryInfo } from '../../constants/recommend'
 import { useCompare } from '../../contexts/CompareContext'
+import { getUniversityLabel } from '../../constants/universities'
+import { useUniversity } from '../../contexts/UniversityContext'
 import { API_URL, ApiError } from '../../services/api'
 import { recommend, toRecommendRequest } from '../../services/recommendService'
 import type { Property } from '../../types/property'
@@ -34,9 +36,10 @@ interface RecommendPanelProps {
 // 추천 결과 (BE POST /recommend, v3 카테고리). 가격 범위 안 매물 전체를 보여 주고 TOP K 를 강조한다.
 // 점수는 전부 BE 가 계산하고 여기서는 보여 주기만 한다.
 export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelProps) {
+  const { university } = useUniversity()
   const missing = missingForRecommend(profile)
   const canRequest = API_URL !== null && isSaved && missing.length === 0
-  const requestKey = canRequest ? JSON.stringify(toRecommendRequest(profile)) : null
+  const requestKey = canRequest ? JSON.stringify(toRecommendRequest(profile, university)) : null
 
   // 응답은 요청 키와 함께 저장한다. 지금 요청 키의 응답이 아직 없으면 계산 중이다.
   const [response, setResponse] = useState<{ key: string; state: State } | null>(null)
@@ -62,7 +65,7 @@ export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelP
       <div className="flex flex-wrap items-center gap-2">
         <Sparkles className="size-5 text-blue" aria-hidden />
         <h2 className="text-base font-bold text-navy">추천 결과</h2>
-        <Badge tone="gray">이대 매물 전체 대상</Badge>
+        <Badge tone="gray">{getUniversityLabel(university)} 매물 전체 대상</Badge>
       </div>
       <p className="mt-1 text-sm text-muted">
         예산 안 매물을 모두 보여 주고, 고른 기준으로 매긴 상위 매물을 강조합니다. 기준별 점수는 매물마다 0~100점입니다.
@@ -223,7 +226,7 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
 
       <p className="flex items-start gap-1.5 text-xs text-muted">
         <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        광고 매물이라 실제 입주 가능 여부는 원본 링크에서 확인해 주세요. 도보시간은 Kakao 도보 경로(강의동 4곳, 건물 대표 지점) 기준입니다.
+        광고 매물이라 실제 입주 가능 여부는 원본 링크에서 확인해 주세요. 도보시간은 Kakao 도보 경로(건물 대표 지점) 기준입니다.
       </p>
     </div>
   )

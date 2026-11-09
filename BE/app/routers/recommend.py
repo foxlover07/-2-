@@ -2,7 +2,7 @@
 
 - POST /recommend            : v3 카테고리 추천 (app.categories, 2026-11-08 팀 결정)
 - GET  /recommend/categories : 카테고리 9개 목록과 지금 계산 가능 여부
-- GET  /recommend/buildings  : 시간표에 고를 수 있는 건물과, 도보시간이 있는 매물 수
+- GET  /recommend/buildings  : 시간표에 고를 수 있는 건물과, 도보시간이 있는 매물 수 (?university=, 기본 이화여자대학교)
 - POST /recommend/v2         : 설계안 v2 (이동시간·교통 편의성·주거비 3요소). 비교용으로 남겨 둔다
 
 도보시간은 매물 CSV 의 강의동 4개(spot1~4) + WALK_TABLE_PATH 의 도보시간 표(있으면)를 쓴다.
@@ -41,9 +41,10 @@ class BuildingCoverage(BaseModel):
 
 
 @router.get("/buildings", response_model=list[BuildingCoverage])
-def list_buildings() -> list[BuildingCoverage]:
-    """도보시간이 있는 매물이 많은 건물부터. 매물 일부만 계산된 건물은 그 건물을 고르면 나머지 매물이 빠진다."""
-    props = load_properties()
+def list_buildings(university: str = "이화여자대학교") -> list[BuildingCoverage]:
+    """그 대학 매물 기준, 도보시간이 있는 매물이 많은 건물부터.
+    매물 일부만 계산된 건물은 그 건물을 고르면 나머지 매물이 빠진다."""
+    props = [p for p in load_properties() if p.university == university]
     counts: dict[str, int] = {}
     for row in load_travel_times(props).values():
         for name in row:

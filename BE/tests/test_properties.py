@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -77,3 +78,22 @@ def test_buildings_endpoint_counts_coverage():
     data = TestClient(app).get("/recommend/buildings").json()
     assert {b["name"] for b in data} == {"ECC", "이화·포스코관", "학관", "공과대학"}
     assert all(b["covered"] == b["total"] == 10 for b in data)
+
+
+def test_data_csv_path_accepts_several_files_and_rejects_duplicate_ids(monkeypatch, tmp_path):
+    from app import data
+
+    poc = data.DEFAULT_CSV_PATH.read_text(encoding="utf-8-sig").splitlines()
+    other = tmp_path / "ku.csv"
+    other.write_text("\n".join([poc[0], poc[1].replace("P001", "ku:P001", 1)]), encoding="utf-8")
+    monkeypatch.setenv("DATA_CSV_PATH", f"{data.DEFAULT_CSV_PATH},{other}")
+    data.load_properties.cache_clear()
+    try:
+        ids = [p.property_id for p in data.load_properties()]
+        assert len(ids) == 11 and "ku:P001" in ids
+        monkeypatch.setenv("DATA_CSV_PATH", f"{data.DEFAULT_CSV_PATH},{data.DEFAULT_CSV_PATH}")
+        data.load_properties.cache_clear()
+        with pytest.raises(ValueError, match="중복"):
+            data.load_properties()
+    finally:
+        data.load_properties.cache_clear()

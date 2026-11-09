@@ -11,7 +11,7 @@ import { PlacesSection } from '../components/profile/PlacesSection'
 import { SimpleSettingsSection } from '../components/profile/SimpleSettingsSection'
 import { TimetableSection } from '../components/profile/TimetableSection'
 import { checkForm, formSignature, toForm, toProfile, type FormState } from '../components/profile/profileForm'
-import { getUniversityLabel } from '../constants/universities'
+import { DEFAULT_UNIVERSITY, getUniversityLabel } from '../constants/universities'
 import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { API_URL } from '../services/api'
@@ -56,15 +56,17 @@ export function ProfilePage() {
   const spotNames = useMemo(() => getSpotNames(universityProperties), [universityProperties])
 
   // 시간표 건물: BE 도보시간 표가 있으면 그 건물 목록(일부 매물만 계산된 건물 포함), 없으면 매물 데이터의 강의동
-  const [apiBuildings, setApiBuildings] = useState<BuildingCoverage[] | null>(null)
+  // 응답을 대학과 함께 저장해, 대학을 바꾸면 새 응답이 올 때까지 이전 대학 건물을 쓰지 않는다
+  const [buildingsResp, setBuildingsResp] = useState<{ university: string; list: BuildingCoverage[] } | null>(null)
+  const apiBuildings = buildingsResp?.university === university ? buildingsResp.list : null
   useEffect(() => {
     if (API_URL === null) return
     const ctrl = new AbortController()
-    getBuildings(ctrl.signal)
-      .then(setApiBuildings)
+    getBuildings(university, ctrl.signal)
+      .then((list) => setBuildingsResp({ university, list }))
       .catch(() => {})
     return () => ctrl.abort()
-  }, [])
+  }, [university])
   // 매물의 1/4 이상에 도보시간이 있는 건물만 고르게 한다. 그보다 적은 건물(예전 표본에서만 계산된 건물)을 고르면
   // 대부분의 매물이 추천에서 빠지기 때문이다. 계산이 늘면 자동으로 목록에 들어온다.
   const MIN_COVERAGE = 0.25
@@ -121,6 +123,7 @@ export function ProfilePage() {
           departmentBuildings={form.departmentBuildings}
           grade={form.grade}
           buildings={spotNames}
+          hasPresets={university === DEFAULT_UNIVERSITY}
           error={check.departmentError}
           onChange={patch}
         />
