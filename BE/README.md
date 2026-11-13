@@ -40,7 +40,7 @@ uv run uvicorn app.main:app --reload
 - http://localhost:8000/health
 - http://localhost:8000/properties
 - http://localhost:8000/properties/P001
-- `POST http://localhost:8000/recommend` (아래 "추천 점수 v2")
+- `POST http://localhost:8000/recommend` (아래 "추천")
 - API 문서: http://localhost:8000/docs
 
 ## LLM 호출 실험 (`scripts/ask.py`)
@@ -79,108 +79,159 @@ BE/
 ├── app/
 │   ├── main.py              # FastAPI 앱, CORS, /health
 │   ├── models.py            # Pydantic Property 모델 (FE/src/types/property.ts 와 1:1)
-│   ├── data.py              # CSV 로딩 (빈 값 → null, 숫자 열 → 숫자)
+│   ├── data.py              # CSV 로딩 (빈 값 → null, 숫자 열 → 숫자), 도보시간 표
 │   ├── config.py            # 데이터 파이프라인·외부 API 설정
-│   ├── scoring_config.py    # 추천 점수 v2 설정값 (설계안 8장) + 학과 → 건물 예시표
-│   ├── scoring.py           # 추천 점수 v2 (필터, 요소별 점수, 종합 점수, 비추천 사유)
-│   ├── tools/               # Kakao API (데이터 파이프라인용)
+│   ├── buildings.py         # 시간표 건물 이름 정규화·줄임말
+│   ├── scoring_config.py    # 추천 설정값 (통합안 6장) + 학과 → 건물 예시표
+│   ├── scoring.py           # 추천 (필터, 요소별 점수, 종합 점수, 비추천 사유)
+│   ├── exclusions.py        # 챗봇 제외 조건: 확인 계획 형식 + 확인 도구 실행 (챗봇은 미완성)
+│   ├── tools/               # Kakao API (장소 검색·도보 경로·주소)
 │   └── routers/
 │       ├── properties.py    # GET /properties, GET /properties/{property_id}
-│       └── recommend.py     # POST /recommend
+│       └── recommend.py     # POST /recommend, GET /recommend/buildings
 ├── pipeline/                # 매물 수집·정규화, 도보 경로 (오프라인 스크립트)
 ├── scripts/ask.py           # LLM 호출 실험
 └── tests/
     ├── test_properties.py
-    ├── test_scoring_time.py     # 1단계 시간 점수 함수
-    ├── test_scoring_cost.py     # 2단계 예산 필터 · 주거비
-    ├── test_scoring_travel.py   # 3단계 이동시간
-    ├── test_scoring_combine.py  # 4단계 종합 점수 · 비추천 사유
-    ├── test_recommend_api.py    # 5단계 POST /recommend
+    ├── test_scoring_rule.py     # 공통 규칙 · 교환비 · 3.4장 예시표 · 설정값
+    ├── test_scoring_filters.py  # 필터 순서·사유 · 대학별
+    ├── test_scoring_travel.py   # 이동 시간 (학과 건물 · 시간표) · 건물 이름
+    ├── test_scoring_combine.py  # 종합 점수 · 비추천 사유 · assumptions
+    ├── test_exclusions.py       # 챗봇 제외 조건 도구·실행
+    ├── test_recommend_api.py    # POST /recommend
     ├── test_jibsa_adapter.py
     └── test_kakao.py
 ```
 
-## 추천 점수 v2 (`app/scoring.py`)
+## 추천 (`app/scoring.py`)
 
-팀 설계안 「추천 점수 함수 설계안 v2」(2026-11-07)를 구현한다. 지금은 설계안 10장 구현 순서 중 **1~5단계**까지 했다.
-v1(`criteria.py`의 기준 6개·반영 비율 %, `recommend.py`의 중요도 1~5·min-max)은 v2로 대체해 지웠다.
+팀의 「추천 시스템 통합안」(2026-11-13 회의 확정안, `docs/recommend-integrated-design.md`)을 구현한다.
+지금은 통합안 8장 구현 순서 중 **1~4번**까지 했다. 5번 챗봇은 미완성이다.
+v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /recommend/v2`는 이 통합안으로 합쳐 지웠다.
 
-- 요소는 **이동시간 · 교통 편의성 · 주거비** 3개다. 각 요소는 매물별 **절대 점수(0~100)** 라서 다른 매물에 따라 바뀌지 않는다.
+- 요소는 **예산 · 이동 시간 · 면적** 3개다. 매물마다 **절대 점수(0~100)** 라서 다른 매물에 따라 바뀌지 않는다.
 - 사용자는 **1순위·2순위만** 고른다. 가중치는 1·2·3순위 순으로 **0.55 / 0.30 / 0.15**.
-- 계산은 전부 코드가 하고 LLM은 쓰지 않는다. 숫자는 전부 `app/scoring_config.py`에서 읽는다.
+- 계산은 전부 코드가 한다. 숫자는 전부 `app/scoring_config.py`에서 읽는다.
 
-### 계산
+### 필터 (순서대로, 걸리면 사유를 남기고 제외)
 
-| 단계 | 계산 | 설계안 |
+| 순서 | 조건 | 제외 사유 예 | `stage` |
+| --- | --- | --- | --- |
+| 1 | 요청한 대학의 매물만 | (목록에 넣지 않음) | |
+| 2 | 유지비(월세 + 관리비) > 유지비 상한 + 10만 원 | "유지비가 상한보다 월 12만 원 많아서 제외" | `budget` |
+| 3 | 보증금 > 보증금 상한 × 1.2 (입력한 경우만) | "보증금이 상한보다 300만 원 많아서 제외" | `deposit` |
+| 4 | 챗봇 제외 조건 (`exclusions`) | "주변 150m 안 술집 5곳" | `exclusion` |
+| 5 | 월세·관리비, 면적 또는 도보시간 정보 없음 | "도보시간 정보 없음: 공과대학" | `missing` |
+
+유지비가 상한과 상한 + 10만 원 사이인 매물은 남기고 `over_budget: true`("예산 초과")로 표시한다.
+
+### 점수: 공통 규칙과 교환비
+
+```
+점수 = 50 + 5 × (기준보다 좋은 쪽 단위 수)    기준보다 좋을 때
+     = 50 − 10 × (기준보다 나쁜 쪽 단위 수)   기준보다 나쁠 때   → 0~100으로 자름
+단위(교환비): 편도 10분 = 월 5만 원 = 2㎡
+```
+
+| 요소 | 기준 | 좋은 쪽 (+5점/단위) | 나쁜 쪽 (−10점/단위) |
+| --- | --- | --- | --- |
+| 이동 시간 | 희망 통학 시간 (편도) | 희망보다 가까움 (10분) | 희망보다 멂 (10분) |
+| 예산 | 유지비 상한 | 상한보다 쌈 (5만 원) | 상한 초과, 여유 구간 (5만 원) |
+| 면적 | 희망 면적 | 넓은 면적 좋음 +5 · 상관없음 0 · 싫음 −2.5 (2㎡) | 희망보다 좁음 (2㎡) |
+
+- **이동 시간**은 학과 건물 0.4 · 자주 가는 곳 0.4 · 시간표 0.2. 부분마다 편도 평균에 규칙을 적용한 다음 합친다. 자주 가는 곳은 데이터 준비 중이라 늘 빠지고, 시간표가 없을 때도 그 비중을 나머지에 나눈다.
+- 예 (희망 15분, 상한 75만 원, 희망 20㎡): 이동 0분 57.5 · 25분 40 / 유지비 45만 80 · 85만 30 / 면적 16㎡ 30 · 30㎡ 좋음 75, 싫음 37.5.
+- 교환비는 매물 1,175개 회귀분석의 시장 가격으로 정했다 (통합안 3.2장). 학생이 느끼는 통학의 무게보다 작을 수 있다.
+
+### 종합과 결과
+
+- 종합 점수 = `0.55 × 1순위 + 0.30 × 2순위 + 0.15 × 3순위`. 점수 높은 순 → 유지비 낮은 순 → 매물 ID 순.
+- **비추천 사유:** 다른 5가지 1·2순위 조합 중 어디서든 상위 3위 안인데 지금 상위 3위(`displayed_top_n`) 밖인 매물, 최대 3개. 지금 1위와 비교해 가중 점수 차이가 가장 큰 요소를 사유로 쓴다. 이동 시간이 사유면 세부 부분 중 점수가 가장 낮은 부분의 값을 쓴다.
+- **기준 대비 값:** `vs_target`(희망보다 몇 분 / 예산보다 몇 만 원 / 희망보다 몇 ㎡). 기준을 맞추면 50점이라 점수 자체는 낮아 보일 수 있어, 화면에는 이 값을 보여 준다 (통합안 3.6장).
+- **학과 → 건물:** `DEPARTMENT_BUILDINGS`는 이대 **예시값 3개뿐이라 팀 확인이 필요하다.** 다른 대학과 표에 없는 학과는 `department_buildings`로 직접 입력한다.
+- **학년:** 받기만 하고 계산에는 쓰지 않는다.
+
+### 챗봇 제외 조건 (`app/exclusions.py`) — 챗봇은 미완성
+
+사용자가 승인한 **확인 계획**을 `exclusions`로 넣으면 코드가 매물마다 확인한다. 말 → 계획을 만드는 챗봇(LLM)은 아직 없어서, 지금은 계획 JSON을 직접 넣어 테스트한다.
+
+| 도구 | 하는 일 | 필요한 칸 |
 | --- | --- | --- |
-| 필터 | 월세+관리비 > 예산이면 제외. 보증금 > 보증금 예산이면 제외 (보증금 예산을 입력한 경우만). **2026-11-08 결정:** 예산은 1차 필터로만 쓰고 여유 구간이 없어 `over_budget` 은 늘 `false` (여유는 `scoring_config` 에서 다시 켤 수 있음) | 2장 |
-| 시간 점수 | `t ≤ T`: `100 − 15·t/T`, `t > T`: `85 · 2^(−(t−T)/h)`. 0분 100점, T분 85점, 그 뒤로 h분마다 절반 | 3장 |
-| 이동시간 | 학과 건물 0.4 · 자주 가는 곳 0.4 · 시간표 0.2. 부분별 **편도 평균**을 시간 점수로 바꿔 합친다. 학과 건물과 시간표는 T = 희망 통학 시간, h = 10, 도보 | 4.1장 |
-| 주거비 | **2026-11-08 결정:** 예산을 쓰지 않고 필터를 통과한 매물 안에서 상대 비교. `100 × (최고 − 월 고정 주거비) ÷ (최고 − 최저)` (가장 싼 매물 100점 ~ 가장 비싼 매물 0점, 모두 같으면 100점). 최저·최고는 `assumptions.cost_score` 에 남는다 | 4.3장 |
-| 종합 | `0.55 × 1순위 + 0.30 × 2순위 + 0.15 × 3순위`. 동점이면 매물 ID 순, 최대 50개 | 5장 |
-| 비추천 사유 | 다른 5가지 1·2순위 조합 중 어디서든 상위 3위 안인데 지금 화면(현재 조합 상위 `displayed_top_n`위) 밖인 매물, 최대 3개 | 6장 |
-
-- **계산할 수 없는 부분·요소:** 입력이나 데이터가 없는 부분의 비중은 나머지에 비율대로 나누고, `notes`와 `assumptions`에 남긴다.
-  - 지금은 **자주 가는 곳**(이동시간 안)과 **교통 편의성**(요소)이 항상 여기에 해당한다. 시간표를 입력하지 않았을 때도 같다.
-  - 교통 편의성을 1·2순위로 골랐으면 "선택한 순위가 반영되지 않았습니다"라고 안내한다.
-- **비추천 사유:** 지금 1위 매물과 비교해 **가중 점수 차이가 가장 큰 요소**를 사유로 쓴다.
-  - 점수가 없는(null) 요소는 후보에서 뺀다.
-  - 이동시간이 사유면, 세부 부분(학과 건물/시간표) 중 점수가 가장 낮은 부분의 값으로 문장을 만든다.
-  - 후보가 3개를 넘으면 다른 조합에서의 최고 순위가 높은 순, 같으면 ID 순으로 고른다.
-  - `message`는 코드가 만든 기본 문장이다. LLM은 이 문장을 다듬기만 한다(10장 8단계).
-- **학과 → 건물:** `DEPARTMENT_BUILDINGS`는 **예시값이라 팀 확인이 필요하다.** 표에 없는 학과는 `department_buildings`로 직접 입력한다.
-- **이동시간 데이터:** `DB/poc_ewha.csv`의 강의동 4개(ECC, 이화·포스코관, 학관, 공과대학) 도보시간만 쓴다. 이 밖의 건물 이름은 422 오류.
-- **학년:** 받기만 하고, 학과 건물 비중은 0.4로 고정한다.
-- **아직 없는 것:** 교통 편의성(10장 6단계), 자주 가는 곳 + 대중교통 추정(7단계), 특장점 · 시간표 사진 인식 · 줄임말 매핑(8단계).
-
-### `POST /recommend`
-
-입력:
+| `nearby_count` | 반경 N m 안 장소 개수 (키워드 여러 개는 장소 ID로 중복 제거) | `keywords` 또는 `category`, `radius_m` |
+| `nearest_distance` | 가장 가까운 장소까지 거리. 반경(기본 1000m) 안에 없으면 '없음' | `keywords` 또는 `category` |
+| `listing_field` | 매물 칸 조건 (면적, 보증금, 월세, 관리비) | `field` |
 
 ```json
 {
-  "budget_manwon": 75,
-  "deposit_budget_manwon": 1000,
+  "source_text": "밤에 시끄러우면 잠을 못 자요",
+  "conditions": [{"tool": "nearby_count", "label": "술집", "keywords": ["술집", "호프", "클럽"],
+                  "radius_m": 150, "exclude_if": {"op": ">", "value": 2}}],
+  "unsupported": [],
+  "confirm_message": "주변 150m 안에 술집이 3곳 이상인 매물을 뺄게요. 괜찮으세요?"
+}
+```
+
+- 장소 도구는 카카오 장소 검색을 쓴다 (`KAKAO_REST_API_KEY`). 키가 없으면 장소 조건은 확인하지 않고 notes로 안내한다.
+- 매물 좌표가 없으면 빼지 않고 notes에 개수를 남긴다. **PoC 매물 10개는 좌표가 비어 있어** 장소 도구를 시연하려면 좌표가 있는 수집 데이터가 필요하다.
+- 추천 한 번에 카카오 호출 상한 500(설정). 넘으면 남은 매물은 확인하지 않고 "조건을 줄여 주세요"라고 안내한다.
+- 같은 매물·도구·키워드·반경의 결과는 **프로세스 메모리에만** 캐시한다 (카카오 결과 저장 정책은 확인 필요).
+- `unsupported`(도구로 확인할 수 없는 기호)는 추측해서 빼지 않고 "아직 확인할 수 없어요"라고 안내한다.
+- 결과의 `exclusion_counts`에 조건별로 빠진 매물 수가 있다.
+
+### `POST /recommend`
+
+입력 (통합안 1.2장):
+
+```json
+{
+  "university": "이화여자대학교",
   "department": "컴퓨터공학전공",
   "department_buildings": null,
   "grade": 2,
+  "priorities": ["travel", "cost"],
+  "budget_manwon": 75,
+  "deposit_budget_manwon": 1000,
   "desired_commute_min": 15,
+  "desired_area_m2": 20,
+  "larger_area": "neutral",
   "timetable": [{"day": "월", "start": "09:00", "end": "10:15", "building": "ECC"}],
-  "priorities": ["travel", "cost"]
+  "exclusions": []
 }
 ```
 
 | 필드 | 필수 | 설명 |
 | --- | --- | --- |
-| `budget_manwon` | ✅ | 월 고정 주거비 예산 (월세 + 관리비, 만원, 0보다 큼) |
-| `deposit_budget_manwon` | | 보증금 예산 (만원). 없으면 보증금 필터 생략 |
-| `department` | ✅ | 학과. 예시표에 있으면 학과 건물을 자동으로 채운다 |
-| `department_buildings` | | 학과 건물 직접 입력 (주면 예시표 대신 사용) |
-| `grade` | ✅ | 학년 (1 이상) |
+| `university` | | 이 대학 매물만 추천 (기본 이화여자대학교) |
+| `department` | ✅ | 학과. 이대 예시표에 있으면 학과 건물을 자동으로 채운다 |
+| `department_buildings` | | 학과 건물 직접 입력 (다른 대학은 필수) |
+| `grade` | ✅ | 학년 (1 이상, 계산에는 안 씀) |
+| `priorities` | ✅ | 1·2순위. `travel`(이동 시간) / `cost`(예산) / `area`(면적) 중 서로 다른 2개 |
+| `budget_manwon` | ✅ | 유지비(월세 + 관리비) 상한, 만원 |
+| `deposit_budget_manwon` | | 보증금 상한. 없으면 보증금 필터 생략 |
 | `desired_commute_min` | ✅ | 희망 통학 시간 (편도, 도보, 분) |
-| `timetable` | | `[{day, start, end, building}]`. 시각은 `HH:MM` |
-| `priorities` | ✅ | 1·2순위. `travel`(이동시간) / `transit`(교통 편의성) / `cost`(주거비) 중 서로 다른 2개 |
+| `desired_area_m2` | ✅ | 희망 면적 (㎡) |
+| `larger_area` | | 더 넓은 면적: `like` / `neutral`(기본) / `dislike` |
+| `timetable` | | `[{day, start, end, building}]`. 건물 줄임말은 표준 이름으로 읽는다 |
+| `exclusions` | | 승인된 챗봇 확인 계획 목록 |
 
 출력:
 
 | 필드 | 내용 |
 | --- | --- |
-| `priorities` | 1·2·3순위 |
-| `weights` | 실제로 쓴 가중치 (계산 못 한 요소는 0, 합 1) |
-| `ranked[]` | `rank`, `property_id`, `score`, `factor_scores`(요소별 0~100, 없으면 null), `contributions`, `travel_parts`(학과 건물·시간표의 `avg_min`·`target_min`·`score`·`weight`), `monthly_cost_manwon`, `deposit_manwon`, `over_budget` |
-| `not_recommended[]` | `property_id`, `best_rank_elsewhere`, `top_in`(상위 3위 안인 다른 조합), `weak`·`strong`(요소, 값, 1위 값, 점수, 가중 점수 차이), `message` |
-| `excluded[]` | `property_id`, `reason` (예: "예산보다 월 12만 원 비싸서 제외") |
-| `assumptions` | 사용한 T, h, 가중치(순위 기준·실제), 여유 금액, 학과 건물과 그 출처, 학년, 설정값 전체 |
-| `notes` | 계산에서 뺀 부분·요소 등 안내 |
+| `priorities`, `weights` | 1·2·3순위와 실제로 쓴 가중치 |
+| `ranked[]` | `rank`, `score`, `factor_scores`(travel/cost/area), `contributions`, `travel_parts`, `vs_target`, `monthly_cost_manwon`, `deposit_manwon`, `area_m2`, `over_budget` |
+| `not_recommended[]` | `best_rank_elsewhere`, `top_in`, `weak`·`strong`, `message` |
+| `excluded[]` | `property_id`, `reason`, `stage`, `condition`(챗봇 조건 이름) |
+| `exclusion_counts` | 챗봇 조건 이름 → 빠진 매물 수 |
+| `assumptions` | 대학, 여유 금액, 희망 시간·면적과 넓은 면적 선택, 가중치(나눈 결과 포함), 승인된 챗봇 조건, 설정값 전체 |
+| `notes` | 계산하지 못한 부분 등 안내 |
 
-요소별 점수는 순위 조합과 상관없이 같다. 그래서 결과 화면에서 1·2순위를 바꾸면 `factor_scores`와 가중치만으로 바로 다시 정렬할 수 있다.
+### 남은 것과 한계 (통합안 9장)
 
-### 팀 의견 요청
-
-1. **학과 건물 비중 40%의 근거:** 학과 건물을 이동시간에서 40%로 크게 반영한 이유는, 학기마다 시간표가 바뀌어 학과 건물이 장기적으로 더 중요하다고 봤기 때문이다. 실제로 학과 건물 수업이 많은지는 확인이 필요하다 (특히 1학년은 전공 수업이 적다). 수강편람으로 확인하는 안, 학년별로 비중을 바꾸는 안에 대한 의견.
-2. **학과 건물 두 번 반영:** 시간표에 학과 건물 수업이 있으면 학과 건물이 두 번 반영된다. 의도와 같은 방향이라 그대로 두었는데 괜찮은지.
-
-### 알려진 한계
-
-1. 대중교통 시간은 지하철 기준 추정값이다. 버스가 더 빠른 경우를 놓치며, 추정값은 실제보다 길게만 나온다 (비용 때문에 ODsay를 쓰지 않음).
-2. 관리비 정보가 없는 매물의 처리 방식은 미정이다. 지금은 "월세 또는 관리비 정보 없음"으로 제외한다.
+- **학과 → 건물 표:** 이대 예시 3개뿐이다. 다른 대학은 사용자가 건물을 고른다.
+- **매물 좌표:** 레포의 PoC 매물 10개는 좌표가 비어 있다.
+- **챗봇:** 미완성. 확인 도구의 기본값(소음 → 키워드·반경·개수 등), LLM 모델, 프롬프트, 확인 화면을 정해야 한다.
+- **교환비:** 시장 가격으로 정한 값이라 학생이 느끼는 통학의 무게보다 작을 수 있다. "A가 B보다 위여야 한다" 형식의 테스트 케이스로 확인한다.
+- **도로·소음:** 카카오 장소 검색으로는 확인할 수 없다. 추후 도구로 추가한다.
+- **대중교통 시간:** 지금은 도보만 쓴다.
+- **관리비 정보가 없는 매물:** 지금은 "월세 또는 관리비 정보 없음"으로 제외한다.
