@@ -1,7 +1,6 @@
 // 생활 프로필 편집 폼 상태 ↔ 저장값(Profile) 변환과 검증. 화면 컴포넌트는 이 파일만 쓴다.
-import { DEPARTMENTS, TIME_RE, type Answers, type Area, type CategoryKey, type Day, type PlaceKind } from '../../constants/recommend'
+import { DEPARTMENTS, TIME_RE, type Area, type Day, type Factor, type LargerArea } from '../../constants/recommend'
 import type { ClassSlot, FrequentPlace, Profile } from '../../utils/profile'
-import type { SpotVisits } from '../../utils/walk'
 
 export const TIME_INPUT =
   'h-10 w-full rounded-control border bg-white px-3 text-sm text-text outline-none focus:border-blue focus:ring-1 focus:ring-blue'
@@ -23,10 +22,7 @@ export interface TimetableRow {
 export interface PlaceRow {
   id: number
   area: Area
-  kind: PlaceKind
   visitsPerWeek: number
-  fromCampus: boolean
-  endsAt: string // '' = 미입력 (선택)
 }
 
 export interface FormState {
@@ -34,14 +30,17 @@ export interface FormState {
   customDepartment: string
   departmentBuildings: string[]
   grade: number | null
+  priorities: Factor[] // 1·2순위 (누른 순서)
   budgetText: string
   depositText: string
-  categories: CategoryKey[]
-  answers: Answers
+  commuteText: string
+  areaText: string
+  largerArea: LargerArea
   timetable: TimetableRow[]
   places: PlaceRow[]
-  visits: SpotVisits
 }
+
+const numText = (n: number | null) => (n === null ? '' : String(n))
 
 export function toForm(p: Profile): FormState {
   const known = DEPARTMENTS.includes(p.department)
@@ -50,20 +49,14 @@ export function toForm(p: Profile): FormState {
     customDepartment: known ? '' : p.department,
     departmentBuildings: p.departmentBuildings,
     grade: p.grade,
-    budgetText: p.budgetManwon === null ? '' : String(p.budgetManwon),
-    depositText: p.depositBudgetManwon === null ? '' : String(p.depositBudgetManwon),
-    categories: p.categories,
-    answers: p.answers,
+    priorities: p.priorities,
+    budgetText: numText(p.budgetManwon),
+    depositText: numText(p.depositBudgetManwon),
+    commuteText: numText(p.desiredCommuteMin),
+    areaText: numText(p.desiredAreaM2),
+    largerArea: p.largerArea,
     timetable: p.timetable.map((s) => ({ id: newRowId(), ...s })),
-    places: p.places.map((pl) => ({
-      id: newRowId(),
-      area: pl.area,
-      kind: pl.kind,
-      visitsPerWeek: pl.visitsPerWeek,
-      fromCampus: pl.fromCampus,
-      endsAt: pl.endsAt ?? '',
-    })),
-    visits: p.visits,
+    places: p.places.map((pl) => ({ id: newRowId(), ...pl })),
   }
 }
 
@@ -72,7 +65,7 @@ export function departmentName(form: FormState): string {
 }
 
 // 빈 칸은 미설정(null). 숫자가 아니거나 범위를 벗어나면 undefined(오류).
-export function parseManwon(text: string, { positive = false } = {}): number | null | undefined {
+export function parseNumber(text: string, { positive = false } = {}): number | null | undefined {
   if (text.trim() === '') return null
   const n = Number(text)
   if (!Number.isFinite(n)) return undefined
@@ -90,18 +83,23 @@ export function timetableRowError(row: TimetableRow, buildings: string[]): strin
 
 export interface FormCheck {
   budget: number | null | undefined
-  budgetError: string | null
   deposit: number | null | undefined
-  depositError: string | null
+  commute: number | null | undefined
+  area: number | null | undefined
+  errors: { budget: string | null; deposit: string | null; commute: string | null; area: string | null }
   departmentError: string | null
   rowErrors: Record<number, string>
   canSave: boolean
 }
 
+const POSITIVE = '0보다 큰 숫자를 입력해 주세요.'
+
 // deptBuildings: 학과 건물 선택지, ttBuildings: 시간표 건물 선택지 (도보시간 표가 있으면 더 많다)
 export function checkForm(form: FormState, deptBuildings: string[], ttBuildings: string[] = deptBuildings): FormCheck {
-  const budget = parseManwon(form.budgetText, { positive: true })
-  const deposit = parseManwon(form.depositText)
+  const budget = parseNumber(form.budgetText, { positive: true })
+  const deposit = parseNumber(form.depositText)
+  const commute = parseNumber(form.commuteText, { positive: true })
+  const area = parseNumber(form.areaText, { positive: true })
   const rowErrors: Record<number, string> = {}
   for (const row of form.timetable) {
     const err = timetableRowError(row, ttBuildings)
@@ -113,49 +111,40 @@ export function checkForm(form: FormState, deptBuildings: string[], ttBuildings:
   } else if (deptBuildings.length > 0 && form.departmentBuildings.some((b) => !deptBuildings.includes(b))) {
     departmentError = '목록에 없는 학과 건물이 있습니다. 다시 골라 주세요.'
   }
-  const budgetError = budget === undefined ? '0보다 큰 숫자를 입력해 주세요.' : null
-  const depositError = deposit === undefined ? '0 이상의 숫자를 입력해 주세요.' : null
+  const errors = {
+    budget: budget === undefined ? POSITIVE : null,
+    deposit: deposit === undefined ? '0 이상의 숫자를 입력해 주세요.' : null,
+    commute: commute === undefined ? POSITIVE : null,
+    area: area === undefined ? POSITIVE : null,
+  }
   return {
     budget,
-    budgetError,
     deposit,
-    depositError,
+    commute,
+    area,
+    errors,
     departmentError,
     rowErrors,
-    canSave:
-      budgetError === null &&
-      depositError === null &&
-      departmentError === null &&
-      Object.keys(rowErrors).length === 0,
+    canSave: Object.values(errors).every((e) => e === null) && departmentError === null && Object.keys(rowErrors).length === 0,
   }
 }
 
 // 검증을 통과한 폼 → 저장값. savedAt 은 저장할 때 채운다.
-export function toProfile(form: FormState, check: FormCheck, spotNames: string[]): Omit<Profile, 'savedAt'> {
-  // 지금 대학의 강의동만 남긴다. 강의동 데이터가 없는 대학에서는 기존 방문 기록을 그대로 둔다.
-  const visits =
-    spotNames.length === 0
-      ? form.visits
-      : Object.fromEntries(Object.entries(form.visits).filter(([name]) => spotNames.includes(name)))
+export function toProfile(form: FormState, check: FormCheck): Omit<Profile, 'savedAt'> {
   const timetable: ClassSlot[] = form.timetable.map(({ day, start, end, building }) => ({ day, start, end, building }))
-  const places: FrequentPlace[] = form.places.map((pl) => ({
-    area: pl.area,
-    kind: pl.kind,
-    visitsPerWeek: pl.visitsPerWeek,
-    fromCampus: pl.fromCampus,
-    endsAt: pl.endsAt === '' ? null : pl.endsAt,
-  }))
+  const places: FrequentPlace[] = form.places.map(({ area, visitsPerWeek }) => ({ area, visitsPerWeek }))
   return {
     department: departmentName(form),
     departmentBuildings: form.departmentBuildings,
     grade: form.grade,
+    priorities: form.priorities,
     budgetManwon: check.budget ?? null,
     depositBudgetManwon: check.deposit ?? null,
-    categories: form.categories,
-    answers: form.answers,
+    desiredCommuteMin: check.commute ?? null,
+    desiredAreaM2: check.area ?? null,
+    largerArea: form.largerArea,
     timetable,
     places,
-    visits,
   }
 }
 

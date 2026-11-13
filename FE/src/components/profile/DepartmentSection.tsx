@@ -49,7 +49,7 @@ export function DepartmentSection({
     <SectionCard
       step={step}
       title="기본 정보"
-      description="학과 건물은 시간표를 입력하지 않았을 때 주간 통학 시간을 추정하는 데 쓰입니다"
+      description="학과 건물까지 편도 시간이 이동 시간 점수의 가장 큰 부분입니다 · 학년은 지금은 받기만 합니다"
     >
       <div className="grid gap-4 sm:grid-cols-[1fr_1fr_8rem]">
         <label className="flex flex-col gap-1.5 text-xs text-muted">

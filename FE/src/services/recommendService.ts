@@ -1,10 +1,10 @@
-import { DEPARTMENT_BUILDINGS } from '../constants/recommend'
+import { DEPARTMENT_BUILDINGS, type Factor } from '../constants/recommend'
 import { DEFAULT_UNIVERSITY } from '../constants/universities'
 import type { RecommendRequest, RecommendResult } from '../types/recommend'
 import type { Profile } from '../utils/profile'
 import { apiFetch } from './api'
 
-// 추천 계산은 BE(POST /recommend, v3 카테고리)만 한다. FE 는 점수를 만들지 않는다.
+// 추천 계산은 BE(POST /recommend, 추천 시스템 통합안)만 한다. FE 는 점수를 만들지 않는다.
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((x) => b.includes(x))
@@ -17,19 +17,18 @@ export function toRecommendRequest(p: Profile, university: string = DEFAULT_UNIV
   const preset = university === DEFAULT_UNIVERSITY ? DEPARTMENT_BUILDINGS[dept] : undefined
   return {
     university,
-    upkeep_max_manwon: p.budgetManwon ?? 0,
-    deposit_max_manwon: p.depositBudgetManwon,
     department: dept,
     // 예시표와 같으면 null 로 보내 BE 가 예시표를 쓰게 한다 (assumptions 에 출처가 남는다)
     department_buildings: preset && sameSet(preset, p.departmentBuildings) ? null : p.departmentBuildings,
     grade: p.grade ?? 1,
-    categories: p.categories,
-    answers: {
-      weekly_commute_target_min: p.answers.weeklyCommuteTargetMin,
-      gap_rest_min: p.answers.gapRestMin,
-      first_class_buffer_min: p.answers.firstClassBufferMin,
-    },
+    priorities: [p.priorities[0], p.priorities[1]] as [Factor, Factor],
+    budget_manwon: p.budgetManwon ?? 0,
+    deposit_budget_manwon: p.depositBudgetManwon,
+    desired_commute_min: p.desiredCommuteMin ?? 0,
+    desired_area_m2: p.desiredAreaM2 ?? 0,
+    larger_area: p.largerArea,
     timetable: p.timetable,
+    exclusions: [], // 챗봇 확인 계획 (미완성). 승인된 계획이 생기면 여기에 넣는다
   }
 }
 

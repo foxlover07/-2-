@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { Check, CircleAlert, Plus, Sparkles, TriangleAlert, UserRound } from 'lucide-react'
-import { categoryInfo } from '../../constants/recommend'
-import { useCompare } from '../../contexts/CompareContext'
+import { Check, CircleAlert, Lightbulb, Plus, Sparkles, TriangleAlert, UserRound } from 'lucide-react'
+import {
+  DISPLAYED_TOP_N,
+  LARGER_AREA_OPTIONS,
+  MONTHLY_BUDGET_SLACK_MANWON,
+  factorLabel,
+  type Factor,
+} from '../../constants/recommend'
 import { getUniversityLabel } from '../../constants/universities'
+import { useCompare } from '../../contexts/CompareContext'
 import { useUniversity } from '../../contexts/UniversityContext'
 import { API_URL, ApiError } from '../../services/api'
 import { recommend, toRecommendRequest } from '../../services/recommendService'
 import type { Property } from '../../types/property'
-import type { RankedProperty, RecommendResult } from '../../types/recommend'
+import type { ExcludedStage, NotRecommended, RankedProperty, RecommendResult } from '../../types/recommend'
 import { cx } from '../../utils/cx'
 import { DUPLICATE_HINT, duplicateCounts } from '../../utils/duplicates'
 import { formatArea, formatManwon } from '../../utils/format'
@@ -23,6 +29,15 @@ const LINK_SECONDARY =
   'inline-flex h-8 items-center rounded-control border border-border bg-white px-3 text-sm font-medium text-text hover:bg-bg'
 
 const pct = (w: number) => `${Math.round(w * 100)}%`
+const num = (v: number) => Math.abs(v).toLocaleString('ko-KR', { maximumFractionDigits: 1 })
+
+const STAGE_LABELS: Record<ExcludedStage, string> = {
+  budget: '유지비 상한 초과',
+  deposit: '보증금 상한 초과',
+  exclusion: '챗봇 조건',
+  missing: '정보 없음',
+  duplicate: '중복',
+}
 
 type State = { status: 'loading' } | { status: 'error'; message: string } | { status: 'done'; result: RecommendResult }
 type SortMode = 'ai' | 'price'
@@ -33,7 +48,7 @@ interface RecommendPanelProps {
   properties: Property[]
 }
 
-// 추천 결과 (BE POST /recommend, v3 카테고리). 가격 범위 안 매물 전체를 보여 주고 TOP K 를 강조한다.
+// 추천 결과 (BE POST /recommend, 추천 시스템 통합안). 필터를 통과한 매물 전체를 보여 주고 상위 매물을 강조한다.
 // 점수는 전부 BE 가 계산하고 여기서는 보여 주기만 한다.
 export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelProps) {
   const { university } = useUniversity()
@@ -68,7 +83,7 @@ export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelP
         <Badge tone="gray">{getUniversityLabel(university)} 매물 전체 대상</Badge>
       </div>
       <p className="mt-1 text-sm text-muted">
-        예산 안 매물을 모두 보여 주고, 고른 기준으로 매긴 상위 매물을 강조합니다. 기준별 점수는 매물마다 0~100점입니다.
+        조건에 맞는 매물을 모두 보여 주고, 예산 · 이동 시간 · 면적을 우선순위대로 반영한 상위 매물을 강조합니다.
       </p>
 
       {!isSaved || missing.length > 0 ? (
@@ -76,7 +91,9 @@ export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelP
           icon={UserRound}
           title="생활 프로필을 먼저 채워 주세요"
           description={
-            isSaved ? `추천에 필요한 입력: ${missing.join(', ')}` : '학과·학년·유지비 상한과 중요한 기준을 고르고 저장하면 추천을 볼 수 있어요.'
+            isSaved
+              ? `추천에 필요한 입력: ${missing.join(', ')}`
+              : '학과·학년, 우선순위, 유지비 상한·희망 통학 시간·희망 면적을 입력하고 저장하면 추천을 볼 수 있어요.'
           }
           action={
             <Link to="/profile" className={LINK_BUTTON}>
@@ -107,41 +124,46 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
   const rows = useMemo(() => {
     if (sort === 'ai') return result.ranked
     return [...result.ranked].sort(
-      (a, b) => a.upkeep_manwon - b.upkeep_manwon || (a.deposit_manwon ?? 0) - (b.deposit_manwon ?? 0) || a.rank - b.rank,
+      (a, b) =>
+        a.monthly_cost_manwon - b.monthly_cost_manwon || (a.deposit_manwon ?? 0) - (b.deposit_manwon ?? 0) || a.rank - b.rank,
     )
   }, [result.ranked, sort])
   const dupes = useMemo(
     () => duplicateCounts(result.ranked.flatMap((r) => byId.get(r.property_id) ?? [])),
     [result.ranked, byId],
   )
+  const stageCounts = useMemo(() => {
+    const counts = new Map<ExcludedStage, number>()
+    for (const e of result.excluded) counts.set(e.stage, (counts.get(e.stage) ?? 0) + 1)
+    return counts
+  }, [result.excluded])
+  const largerLabel = LARGER_AREA_OPTIONS.find((o) => o.value === profile.largerArea)?.label
 
   return (
     <div className="mt-4 flex flex-col gap-4">
-      {/* 조건·기준 요약 */}
+      {/* 조건·우선순위 요약 */}
       <div className="flex flex-col gap-3 rounded-control border border-border px-4 py-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-bold text-navy">조건</span>
-          {profile.depositBudgetManwon !== null && <Badge>보증금 ≤ {formatManwon(profile.depositBudgetManwon)}</Badge>}
           <Badge>유지비 ≤ {formatManwon(profile.budgetManwon)} / 월</Badge>
+          {profile.depositBudgetManwon !== null && <Badge>보증금 ≤ {formatManwon(profile.depositBudgetManwon)}</Badge>}
+          <Badge>통학 {profile.desiredCommuteMin}분 (도보)</Badge>
+          <Badge>
+            면적 {formatArea(profile.desiredAreaM2)} · 더 넓으면 {largerLabel}
+          </Badge>
           <span className="font-bold text-blue">→ {result.ranked.length}개</span>
           <Link to="/profile" className={cx(LINK_SECONDARY, 'ml-auto')}>
-            조건·기준 바꾸기
+            조건·순위 바꾸기
           </Link>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-bold text-navy">기준</span>
-          {result.categories.map((k, i) => (
-            <span
-              key={k}
-              className={cx(
-                'flex items-center gap-1.5 rounded-full py-1 pr-2.5 pl-1',
-                result.weights[k] > 0 ? 'bg-blue-50 text-blue' : 'bg-bg text-muted line-through',
-              )}
-            >
-              <span className="flex size-5 items-center justify-center rounded-full bg-navy text-xs font-bold text-white no-underline">
+          <span className="font-bold text-navy">우선순위</span>
+          {result.priorities.map((k, i) => (
+            <span key={k} className="flex items-center gap-1.5 rounded-full bg-blue-50 py-1 pr-2.5 pl-1 text-blue">
+              <span className="flex size-5 items-center justify-center rounded-full bg-navy text-xs font-bold text-white">
                 {i + 1}
               </span>
-              {categoryInfo(k)?.label} {pct(result.weights[k] ?? 0)}
+              {factorLabel(k)} {pct(result.weights[k] ?? 0)}
             </span>
           ))}
         </div>
@@ -164,7 +186,7 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
           {(
             [
               ['ai', 'AI 추천순'],
-              ['price', '가격 낮은 순'],
+              ['price', '유지비 낮은 순'],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -183,7 +205,7 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
         </div>
         <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">
           <span className="size-3.5 rounded border border-blue bg-blue-50" aria-hidden />
-          추천 상위 {result.top_k}개 강조
+          추천 상위 {DISPLAYED_TOP_N}개 강조
         </span>
       </div>
 
@@ -195,7 +217,7 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
             <ResultRow
               key={r.property_id}
               item={r}
-              categories={result.categories}
+              priorities={result.priorities}
               property={byId.get(r.property_id)}
               duplicateCount={dupes.get(r.property_id) ?? 0}
             />
@@ -208,14 +230,35 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
         </button>
       )}
 
+      {result.not_recommended.length > 0 && (
+        <section className="rounded-control border border-border px-4 py-3">
+          <h3 className="flex items-center gap-1.5 text-sm font-bold text-navy">
+            <Lightbulb className="size-4 text-amber" aria-hidden />
+            순위를 바꾸면 위로 올라오는 매물
+          </h3>
+          <ul className="mt-2 flex flex-col gap-2">
+            {result.not_recommended.map((n) => (
+              <NotRecommendedItem key={n.property_id} item={n} property={byId.get(n.property_id)} />
+            ))}
+          </ul>
+        </section>
+      )}
+
       {result.excluded.length > 0 && (
         <details className="rounded-control border border-border">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-text">
             추천에서 제외된 매물 {result.excluded.length}개
+            <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
+              {[...stageCounts].map(([stage, n]) => (
+                <Badge key={stage} tone={stage === 'exclusion' ? 'blue' : 'gray'}>
+                  {STAGE_LABELS[stage]} {n}
+                </Badge>
+              ))}
+            </span>
           </summary>
           <ul className="max-h-72 divide-y divide-border overflow-y-auto border-t border-border text-sm">
             {result.excluded.map((e) => (
-              <li key={e.property_id} className="flex flex-wrap gap-x-3 px-4 py-2">
+              <li key={`${e.property_id}-${e.stage}`} className="flex flex-wrap gap-x-3 px-4 py-2">
                 <span className="font-medium text-text">{byId.get(e.property_id)?.address ?? e.property_id}</span>
                 <span className="text-muted">{e.reason}</span>
               </li>
@@ -227,32 +270,55 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
       <p className="flex items-start gap-1.5 text-xs text-muted">
         <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         광고 매물이라 실제 입주 가능 여부는 원본 링크에서 확인해 주세요. 도보시간은 Kakao 도보 경로(건물 대표 지점) 기준입니다.
+        유지비가 상한 ~ 상한 + {MONTHLY_BUDGET_SLACK_MANWON}만 원인 매물은 "예산 초과"로 표시합니다.
       </p>
     </div>
   )
 }
 
+// 기준 대비 값 (통합안 3.6: 점수 대신 이 값을 보여 준다)
+function vsText(factor: Factor, item: RankedProperty): { text: string; good: boolean | null } {
+  const v = item.vs_target
+  if (factor === 'travel') {
+    if (v.travel_min === null) return { text: '계산 불가', good: null }
+    if (v.travel_min === 0) return { text: '희망 통학 시간과 같음', good: null }
+    return v.travel_min < 0
+      ? { text: `희망보다 ${num(v.travel_min)}분 가까움`, good: true }
+      : { text: `희망보다 ${num(v.travel_min)}분 멂`, good: false }
+  }
+  if (factor === 'cost') {
+    if (v.cost_manwon === 0) return { text: '예산과 같음', good: null }
+    return v.cost_manwon < 0
+      ? { text: `예산보다 ${num(v.cost_manwon)}만 원 쌈`, good: true }
+      : { text: `예산보다 ${num(v.cost_manwon)}만 원 많음`, good: false }
+  }
+  if (v.area_m2 === 0) return { text: '희망 면적과 같음', good: null }
+  return v.area_m2 > 0
+    ? { text: `희망보다 ${num(v.area_m2)}㎡ 넓음`, good: null }
+    : { text: `희망보다 ${num(v.area_m2)}㎡ 좁음`, good: false }
+}
+
 function ResultRow({
   item,
-  categories,
+  priorities,
   property,
   duplicateCount,
 }: {
   item: RankedProperty
-  categories: string[]
+  priorities: Factor[]
   property: Property | undefined
   duplicateCount: number
 }) {
   const compare = useCompare()
   const inCompare = compare.has(item.property_id)
-  const top = item.top
+  const top = item.rank <= DISPLAYED_TOP_N
 
   return (
     <li
       className={cx(
         'flex flex-wrap items-center gap-x-4 gap-y-3 rounded-control border px-4 py-3.5',
         top ? 'border-blue bg-blue-50' : 'border-border bg-white',
-        item.rank === 1 && top && 'border-2',
+        item.rank === 1 && 'border-2',
       )}
     >
       <span
@@ -270,6 +336,7 @@ function ResultRow({
             {property?.address ?? item.property_id}
           </Link>
           {property && <Badge tone="blue">{property.property_type}</Badge>}
+          {item.over_budget && <Badge tone="amber">예산 초과</Badge>}
           {duplicateCount > 1 && (
             <Badge tone="gray" title={DUPLICATE_HINT}>
               같은 집일 수 있음 · {duplicateCount}건
@@ -277,42 +344,31 @@ function ResultRow({
           )}
         </p>
         <p className="mt-0.5 text-xs text-muted">
-          보증금 {formatManwon(item.deposit_manwon)} · 유지비 {formatManwon(item.upkeep_manwon)} / 월
-          {property?.area_m2 != null && ` · ${formatArea(property.area_m2)}`}
+          보증금 {formatManwon(item.deposit_manwon)} · 유지비 {formatManwon(item.monthly_cost_manwon)} / 월 · {formatArea(item.area_m2)}
         </p>
       </div>
 
       <ul className={cx('flex flex-col gap-1', top ? 'w-72' : 'w-64')}>
-        {categories.map((k) => {
-          const s = item.category_scores[k]
-          const v = item.category_values[k]
+        {priorities.map((k) => {
+          const s = item.factor_scores[k]
+          const { text, good } = vsText(k, item)
           return (
             <li key={k} className="flex items-center gap-2 text-xs">
-              <span className="w-14 shrink-0 text-muted">{categoryInfo(k)?.short}</span>
-              {s === null || s === undefined ? (
-                <span className="text-muted">{categoryInfo(k)?.ready ? '계산 불가' : '데이터 준비 중'}</span>
-              ) : (
-                <>
-                  <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-white" aria-hidden>
-                    <span className="block h-full rounded-full bg-blue" style={{ width: `${Math.max(0, Math.min(100, s))}%` }} />
-                  </span>
-                  <span className="font-medium text-text">{v}</span>
-                </>
-              )}
+              <span className="w-14 shrink-0 text-muted">{factorLabel(k)}</span>
+              <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-white" aria-hidden>
+                <span className="block h-full rounded-full bg-blue" style={{ width: `${Math.max(0, Math.min(100, s ?? 0))}%` }} />
+              </span>
+              <span className={cx('font-medium', good === true ? 'text-green' : good === false ? 'text-amber' : 'text-text')}>
+                {text}
+              </span>
             </li>
           )
         })}
       </ul>
 
-      <p className="w-16 text-right">
-        {item.score === null ? (
-          <span className="text-xs text-muted">점수 없음</span>
-        ) : (
-          <>
-            <span className={cx('font-bold', top ? 'text-xl text-navy' : 'text-base text-text')}>{item.score}</span>
-            <span className="text-[11px] text-muted">/100</span>
-          </>
-        )}
+      <p className="w-16 text-right" title="종합 점수 (기준을 딱 맞추면 50점)">
+        <span className={cx('font-bold', top ? 'text-xl text-navy' : 'text-base text-text')}>{item.score}</span>
+        <span className="text-[11px] text-muted">/100</span>
       </p>
 
       <button
@@ -324,6 +380,25 @@ function ResultRow({
         {inCompare ? <Check className="size-3.5" aria-hidden /> : <Plus className="size-3.5" aria-hidden />}
         {inCompare ? '비교 중' : '비교'}
       </button>
+    </li>
+  )
+}
+
+function NotRecommendedItem({ item, property }: { item: NotRecommended; property: Property | undefined }) {
+  const best = item.top_in[0]
+  return (
+    <li className="rounded-control bg-bg px-3 py-2.5 text-sm">
+      <p className="flex flex-wrap items-center gap-1.5">
+        <Link to={`/properties/${item.property_id}`} className="font-bold text-text hover:underline">
+          {property?.address ?? item.property_id}
+        </Link>
+        {best && (
+          <Badge tone="blue">
+            {factorLabel(best.priorities[0])} → {factorLabel(best.priorities[1])} 순이면 {best.rank}위
+          </Badge>
+        )}
+      </p>
+      <p className="mt-1 text-text">{item.message}</p>
     </li>
   )
 }

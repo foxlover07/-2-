@@ -11,6 +11,7 @@ import { getProperties } from '../services/propertyService'
 import type { Property } from '../types/property'
 import { findCheapest, getMonthlyFixedCost } from '../utils/cost'
 import { formatManwon, formatMinutes } from '../utils/format'
+import { departmentVisits } from '../utils/profile'
 import { findShortestWalk, getWeightedAvgWalk } from '../utils/walk'
 
 const MIN_COMPARE = 2
@@ -42,7 +43,9 @@ export function ComparePage() {
   const missingCount = all ? compare.ids.length - selected.length : 0
 
   const cheapest = findCheapest(selected)
-  const shortest = findShortestWalk(selected, profile.visits)
+  // 학과 건물 평균 도보시간 (강의동 방문 횟수 입력은 통합안에서 없앴다)
+  const visits = departmentVisits(profile)
+  const shortest = findShortestWalk(selected, visits)
 
   if (loadError) {
     return (
@@ -108,8 +111,8 @@ export function ComparePage() {
               tone="blue"
               title="최단 이동 매물"
               property={shortest}
-              value={shortest && `가중 평균 ${formatMinutes(getWeightedAvgWalk(shortest, profile.visits))}`}
-              emptyText="생활 프로필에 강의동 방문 횟수를 입력하면 알려 드려요."
+              value={shortest && `학과 건물 평균 ${formatMinutes(getWeightedAvgWalk(shortest, visits))}`}
+              emptyText="생활 프로필에 학과 건물을 입력하면 알려 드려요."
             />
           </div>
 
@@ -118,7 +121,7 @@ export function ComparePage() {
               properties={selected}
               cheapestId={cheapest?.property_id ?? null}
               shortestId={shortest?.property_id ?? null}
-              visits={profile.visits}
+              visits={visits}
               budget={profile.budgetManwon}
               onRemove={compare.remove}
             />

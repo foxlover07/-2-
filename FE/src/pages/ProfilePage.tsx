@@ -3,15 +3,14 @@ import { Link } from 'react-router'
 import { Check, Save } from 'lucide-react'
 import { Button } from '../components/common'
 import { PageContainer } from '../components/layout/PageContainer'
-import { AnswersSection } from '../components/profile/AnswersSection'
-import { BudgetSection } from '../components/profile/BudgetSection'
-import { CategorySection } from '../components/profile/CategorySection'
+import { ConditionsSection } from '../components/profile/ConditionsSection'
 import { DepartmentSection } from '../components/profile/DepartmentSection'
 import { PlacesSection } from '../components/profile/PlacesSection'
-import { SimpleSettingsSection } from '../components/profile/SimpleSettingsSection'
+import { PrioritySection } from '../components/profile/PrioritySection'
 import { TimetableSection } from '../components/profile/TimetableSection'
+import { UniversitySection } from '../components/profile/UniversitySection'
 import { checkForm, formSignature, toForm, toProfile, type FormState } from '../components/profile/profileForm'
-import { DEFAULT_UNIVERSITY, getUniversityLabel } from '../constants/universities'
+import { DEFAULT_UNIVERSITY } from '../constants/universities'
 import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { API_URL } from '../services/api'
@@ -29,7 +28,7 @@ function formatSavedAt(iso: string | null): string {
 }
 
 export function ProfilePage() {
-  const { university } = useUniversity()
+  const { university, setUniversity } = useUniversity()
   const { profile, isSaved, saveProfile } = useProfile()
   const [all, setAll] = useState<Property[] | null>(null)
   const [form, setForm] = useState<FormState>(() => toForm(profile))
@@ -89,17 +88,10 @@ export function ProfilePage() {
   const missing = isSaved ? missingForRecommend(profile) : []
 
   const patch = (p: Partial<FormState>) => setForm((f) => ({ ...f, ...p }))
-  const setVisits = (name: string, count: number | null) =>
-    setForm((f) => {
-      const visits = { ...f.visits }
-      if (count === null) delete visits[name]
-      else visits[name] = count
-      return { ...f, visits }
-    })
 
   const handleSave = () => {
     if (!check.canSave) return
-    const next = { ...toProfile(form, check, spotNames), savedAt: new Date().toISOString() }
+    const next = { ...toProfile(form, check), savedAt: new Date().toISOString() }
     saveProfile(next)
     setForm(toForm(next))
     setJustSaved(true)
@@ -110,14 +102,18 @@ export function ProfilePage() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-xl font-bold text-navy md:text-2xl">생활 프로필</h1>
-          <p className="mt-1.5 text-sm text-muted">예산으로 매물을 거른 뒤, 고른 3가지 기준으로 순위를 매깁니다.</p>
+          <p className="mt-1.5 text-sm text-muted">
+            조건으로 매물을 거른 뒤, 예산 · 이동 시간 · 면적을 우선순위대로 반영해 순위를 매깁니다.
+          </p>
         </div>
         <p className="text-xs text-muted">마지막 저장: {formatSavedAt(profile.savedAt)}</p>
       </div>
 
       <div className="flex flex-col gap-5">
+        <UniversitySection step={1} university={university} onChange={setUniversity} />
+
         <DepartmentSection
-          step={1}
+          step={2}
           departmentChoice={form.departmentChoice}
           customDepartment={form.customDepartment}
           departmentBuildings={form.departmentBuildings}
@@ -128,24 +124,18 @@ export function ProfilePage() {
           onChange={patch}
         />
 
-        <BudgetSection
-          step={2}
+        <PrioritySection step={3} selected={form.priorities} onChange={(priorities) => patch({ priorities })} />
+
+        <ConditionsSection
+          step={4}
           budgetText={form.budgetText}
           depositText={form.depositText}
+          commuteText={form.commuteText}
+          areaText={form.areaText}
+          largerArea={form.largerArea}
           budget={check.budget}
-          budgetError={check.budgetError}
-          depositError={check.depositError}
+          errors={check.errors}
           onChange={patch}
-        />
-
-        <CategorySection step={3} selected={form.categories} onChange={(categories) => patch({ categories })} />
-
-        <AnswersSection
-          step={4}
-          categories={form.categories}
-          answers={form.answers}
-          hasTimetable={form.timetable.length > 0}
-          onChange={(answers) => patch({ answers })}
         />
 
         <TimetableSection
@@ -158,15 +148,6 @@ export function ProfilePage() {
         />
 
         <PlacesSection step={6} rows={form.places} onRowsChange={(places) => patch({ places })} />
-
-        <SimpleSettingsSection
-          step={7}
-          loading={all === null}
-          universityLabel={getUniversityLabel(university)}
-          spotNames={spotNames}
-          visits={form.visits}
-          onVisitsChange={setVisits}
-        />
       </div>
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">

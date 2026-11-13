@@ -164,7 +164,7 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
                 label={
                   <span className="flex flex-wrap items-center gap-1">
                     {name}
-                    {count > 0 && <Badge tone="blue">주 {count}회</Badge>}
+                    {count > 0 && <Badge tone="blue">학과 건물</Badge>}
                   </span>
                 }
                 cells={cells(
@@ -175,7 +175,7 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
             )
           })}
           <Row
-            label="가중 평균 도보시간"
+            label="학과 건물 평균 도보시간"
             strong
             cells={cells(
               (p) => formatMinutes(getWeightedAvgWalk(p, visits)),
@@ -188,7 +188,7 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
                 <Link to="/profile" className="font-medium text-blue underline">
                   생활 프로필
                 </Link>
-                에서 강의동별 주간 방문 횟수를 입력하면 가중 평균 도보시간과 최단 이동 매물을 알려 드려요.
+                에서 학과 건물을 입력하면 학과 건물 평균 도보시간과 최단 이동 매물을 알려 드려요.
               </td>
             </tr>
           )}

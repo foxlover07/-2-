@@ -10,6 +10,7 @@ import { getPropertyById } from '../services/propertyService'
 import type { Property } from '../types/property'
 import { getMonthlyFixedCost, isWithinBudget } from '../utils/cost'
 import { formatArea, formatManwon, NO_INFO } from '../utils/format'
+import { departmentVisits } from '../utils/profile'
 
 // 어떤 ID에 대한 결과인지 함께 들고 있어, ID가 바뀌면 렌더 중에 로딩으로 판단한다.
 type LoadState = { id: string } & ({ kind: 'ready'; property: Property | null } | { kind: 'error' })
@@ -99,7 +100,7 @@ function PropertyDetail({ property: p }: { property: Property }) {
             </dl>
           </Card>
 
-          <WalkTimeCard property={p} visits={profile.visits} />
+          <WalkTimeCard property={p} visits={departmentVisits(profile)} />
         </div>
 
         <div className="flex flex-col gap-5 lg:sticky lg:top-24 lg:self-start">

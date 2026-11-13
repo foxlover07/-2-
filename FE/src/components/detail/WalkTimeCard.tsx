@@ -26,14 +26,14 @@ export function WalkTimeCard({ property, visits }: WalkTimeCardProps) {
       </div>
 
       <div className="mt-4 rounded-control bg-blue-50 px-4 py-3">
-        <p className="text-xs text-muted">내 방문 횟수 기준 가중 평균 도보시간</p>
+        <p className="text-xs text-muted">내 학과 건물 평균 도보시간</p>
         <p className="mt-0.5 text-2xl font-bold text-blue">{formatMinutes(weighted)}</p>
         {!hasVisits && (
           <p className="mt-1 text-xs text-muted">
             <Link to="/profile" className="font-medium text-blue underline">
               생활 프로필
             </Link>
-            에서 강의동별 주간 방문 횟수를 입력하면 계산됩니다.
+            에서 학과 건물을 고르면 계산됩니다.
           </p>
         )}
       </div>
@@ -50,7 +50,7 @@ export function WalkTimeCard({ property, visits }: WalkTimeCardProps) {
                 <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                   <span className="flex items-center gap-1.5 font-medium text-text">
                     {s.name}
-                    {count > 0 && <Badge tone="blue">주 {count}회</Badge>}
+                    {count > 0 && <Badge tone="blue">학과 건물</Badge>}
                   </span>
                   <span className={cx('font-bold', s.walkMin === null ? 'text-muted' : 'text-text')}>
                     {formatMinutes(s.walkMin)}
