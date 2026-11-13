@@ -1,17 +1,20 @@
-"""3단계: 이동시간 - 학과 건물 · 시간표 부분, 도보 (설계안 4.1장)."""
+"""3.3장 이동 시간: 학과 건물 · 시간표 부분 (도보), 각 부분에 공통 규칙 적용 후 비중대로 합침."""
 
 from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
 
+from app.buildings import resolve
 from app.data import load_properties
 from app.scoring import (
     ClassSlot,
+    RecommendRequest,
     department_avg_walk,
     missing_destinations,
-    time_score,
+    recommend,
     timetable_avg_walk,
+    travel_minutes_score,
     travel_part_weights,
     travel_score,
     travel_times_from_csv,
@@ -29,7 +32,7 @@ def slot(day, start, end, building):
     return ClassSlot(day=day, start=start, end=end, building=building)
 
 
-# ---------------------------------------------------------------- 입력·데이터 (criteria 테스트에서 옮김)
+# ---------------------------------------------------------------- 입력·데이터
 
 def test_time_format_is_checked():
     with pytest.raises(ValidationError):
@@ -47,23 +50,17 @@ def test_travel_times_from_csv_reads_four_buildings():
 
 def test_missing_destinations():
     assert missing_destinations(P001, ["ECC", "중앙도서관", "ECC", "본관"]) == ["중앙도서관", "본관"]
-    assert missing_destinations(P001, ["ECC"]) == []
 
 
-# ---------------------------------------------------------------- 학과 건물
+# ---------------------------------------------------------------- 편도 평균
 
 def test_department_single_and_multiple_buildings():
     assert department_avg_walk(P001, ["공과대학"]) == 6
     assert department_avg_walk(P001, ["학관", "ECC"]) == pytest.approx((9 + 19) / 2)
-    assert department_avg_walk(P001, ["학관", "학관"]) == 9  # 중복은 한 번만
-
-
-def test_department_none_without_building_or_time():
+    assert department_avg_walk(P001, ["학관", "학관"]) == 9
     assert department_avg_walk(P001, []) is None
     assert department_avg_walk(P001, ["공과대학", "없는 건물"]) is None
 
-
-# ---------------------------------------------------------------- 시간표 (criteria.weekly_commute_min 에서 옮김)
 
 def test_timetable_uses_first_and_last_class_each_day():
     timetable = [
@@ -72,33 +69,20 @@ def test_timetable_uses_first_and_last_class_each_day():
         slot("월", "11:00", "12:00", "학관"),      # 수업 사이 이동은 제외
         slot("수", "10:30", "11:45", "학관"),      # 하루 한 수업: 9 + 9
     ]
-    # 편도 4번: 6, 19, 9, 9
     assert timetable_avg_walk(P001, timetable) == pytest.approx((6 + 19 + 9 + 9) / 4)
-
-
-def test_timetable_none_without_timetable_or_travel_time():
     assert timetable_avg_walk(P001, []) is None
     assert timetable_avg_walk(P001, [slot("월", "09:00", "10:00", "없는 건물")]) is None
 
 
-# ---------------------------------------------------------------- 이동시간 내부 비중
+# ---------------------------------------------------------------- 내부 비중
 
-def test_part_weights_all_three():
+def test_part_weights():
     assert travel_part_weights(["department", "frequent", "timetable"]) == pytest.approx(
         {"department": 0.4, "frequent": 0.4, "timetable": 0.2}
     )
-
-
-def test_part_weights_redistribute_missing_frequent():
-    # 자주 가는 곳 0.4 를 0.4 : 0.2 비율로 → 2/3, 1/3
+    # 자주 가는 곳(데이터 준비 중) 0.4 를 0.4 : 0.2 비율로 → 2/3, 1/3
     assert travel_part_weights(["department", "timetable"]) == pytest.approx({"department": 2 / 3, "timetable": 1 / 3})
-
-
-def test_part_weights_department_only():
     assert travel_part_weights(["department"]) == {"department": 1.0}
-
-
-def test_part_weights_none_available():
     assert travel_part_weights([]) == {}
 
 
@@ -107,33 +91,29 @@ def test_part_weights_from_config():
     assert travel_part_weights(["department", "timetable"], cfg) == pytest.approx({"department": 0.5, "timetable": 0.5})
 
 
-# ---------------------------------------------------------------- 이동시간 점수
+# ---------------------------------------------------------------- 이동 시간 점수
 
-def test_department_only_score_equals_time_score():
-    result = travel_score(15, department_avg_min=6)
-    assert result.score == pytest.approx(time_score(6, 15, 10))
-    assert set(result.parts) == {"department"}
-    assert result.parts["department"].weight == 1.0
+def test_department_only_score_uses_common_rule():
+    r = travel_score(15, department_avg_min=5)
+    assert r.score == pytest.approx(55)                  # 희망보다 10분 가까움 → +5
+    assert r.parts["department"].target_min == 15
 
 
 def test_department_and_timetable_weighted_2_to_1():
-    result = travel_score(15, department_avg_min=6, timetable_avg_min=25)
-    expected = (2 / 3) * time_score(6, 15, 10) + (1 / 3) * time_score(25, 15, 10)
-    assert result.score == pytest.approx(expected)
-    assert result.parts["timetable"].score == pytest.approx(42.5)
-    assert result.parts["timetable"].target_min == 15
+    r = travel_score(15, department_avg_min=5, timetable_avg_min=25)
+    assert r.parts["timetable"].score == pytest.approx(40)
+    assert r.score == pytest.approx((2 / 3) * 55 + (1 / 3) * 40)
+    assert r.avg_min == pytest.approx((2 / 3) * 5 + (1 / 3) * 25)
 
 
-def test_frequent_part_uses_its_own_target_and_half_life():
-    result = travel_score(15, department_avg_min=6, timetable_avg_min=9, frequent_avg_min=35)
-    assert result.parts["frequent"].target_min == 20
-    assert result.parts["frequent"].score == pytest.approx(42.5)  # 85 × 2^(−15/15)
-    expected = 0.4 * time_score(6, 15, 10) + 0.4 * 42.5 + 0.2 * time_score(9, 15, 10)
-    assert result.score == pytest.approx(expected)
+def test_each_part_scored_before_combining():
+    # 부분마다 규칙을 먼저 적용한 다음 합친다 (평균 시간을 한 번에 점수화하지 않는다)
+    r = travel_score(15, department_avg_min=5, timetable_avg_min=35)
+    assert r.score == pytest.approx((2 / 3) * travel_minutes_score(5, 15) + (1 / 3) * travel_minutes_score(35, 15))
+    assert r.score != pytest.approx(travel_minutes_score(r.avg_min, 15))
 
 
 def test_desired_commute_changes_score():
-    # 같은 26분이라도 희망 통학 시간이 길면 점수가 높다
     assert travel_score(30, department_avg_min=26).score > travel_score(15, department_avg_min=26).score
 
 
@@ -141,14 +121,26 @@ def test_no_parts_returns_none():
     assert travel_score(15) is None
 
 
-def test_half_life_from_config():
-    cfg = replace(CONFIG, department_half_life_min=5)
-    assert travel_score(15, department_avg_min=20, cfg=cfg).score == pytest.approx(42.5)
+# ---------------------------------------------------------------- 건물 이름 정규화·줄임말 (v3 테스트에서 옮김)
+
+def test_building_resolve_normalizes_and_aliases():
+    known = ["ECC", "이화·포스코관", "학관", "공과대학", "조형예술관 A동"]
+    assert resolve("이화포스코관", known) == "이화·포스코관"
+    assert resolve("이화여자대학교 학관", known) == "학관"
+    assert resolve("ecc", known) == "ECC"
+    assert resolve("조형예술관A동", known) == "조형예술관 A동"
+    assert resolve("포관", known) == "이화·포스코관"
+    assert resolve("공대", known) == "공과대학"
+    assert resolve("종과", known) == "종과"        # 모호한 이름은 바꾸지 않음
 
 
-def test_same_school_different_department_different_top1():
-    # (criteria 의 "같은 학교, 다른 패턴" 테스트를 학과 건물 기준으로 옮김)
-    def best(buildings):
-        return max(PROPS, key=lambda p: (travel_score(15, department_avg_min=department_avg_walk(TRAVEL[p.property_id], buildings)).score, p.property_id))
-    assert best(["공과대학"]).property_id == "P007"  # 공과대학 1분
-    assert best(["ECC"]).property_id == "P003"       # ECC 6분
+def test_recommend_reads_aliases_and_notes_them():
+    req = RecommendRequest(
+        department="컴퓨터공학전공", grade=2, priorities=("travel", "cost"), budget_manwon=100,
+        desired_commute_min=15, desired_area_m2=20,
+        timetable=[slot("월", "09:00", "10:15", "포관"), slot("수", "09:00", "10:15", "공대")],
+    )
+    r = recommend(PROPS, req)
+    assert r.ranked and set(r.ranked[0].travel_parts) == {"department", "timetable"}
+    assert any("'포관'을(를) '이화·포스코관'" in n for n in r.notes)
+    assert {"from": "공대", "to": "공과대학"} in r.assumptions["renamed_buildings"]

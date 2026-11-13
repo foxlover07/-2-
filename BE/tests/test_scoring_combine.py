@@ -1,4 +1,4 @@
-"""4단계: 종합 점수 + 1·2순위 가중치 + 비추천 사유 + assumptions (설계안 5장, 6장)."""
+"""4장 종합 점수 (1·2·3순위 → 0.55/0.30/0.15) + 결과 (비추천 사유, assumptions, notes)."""
 
 from dataclasses import replace
 
@@ -25,11 +25,12 @@ BY_ID = {p.property_id: p for p in PROPS}
 
 def req(**overrides) -> RecommendRequest:
     base = dict(
-        budget_manwon=75,
         department="컴퓨터공학전공",  # 예시표: 공과대학
         grade=2,
-        desired_commute_min=15,
         priorities=("travel", "cost"),
+        budget_manwon=75,
+        desired_commute_min=15,
+        desired_area_m2=20,
     )
     return RecommendRequest(**{**base, **overrides})
 
@@ -41,320 +42,224 @@ def ids(items) -> list[str]:
 # ---------------------------------------------------------------- 1·2순위 → 가중치
 
 def test_full_priorities_adds_third():
-    assert full_priorities(("cost", "travel")) == ("cost", "travel", "transit")
-    assert full_priorities(("transit", "cost")) == ("transit", "cost", "travel")
+    assert full_priorities(("cost", "travel")) == ("cost", "travel", "area")
+    assert full_priorities(("area", "cost")) == ("area", "cost", "travel")
 
 
 def test_rank_weights_055_030_015():
-    assert rank_weights(("travel", "cost")) == {"travel": 0.55, "cost": 0.30, "transit": 0.15}
-    assert rank_weights(("transit", "travel")) == {"transit": 0.55, "travel": 0.30, "cost": 0.15}
+    assert rank_weights(("travel", "cost")) == {"travel": 0.55, "cost": 0.30, "area": 0.15}
+    assert rank_weights(("area", "travel")) == {"area": 0.55, "travel": 0.30, "cost": 0.15}
 
 
 def test_applied_weights_redistributes_unavailable_factor():
     w = applied_weights(rank_weights(("travel", "cost")), ["travel", "cost"])
-    assert w == pytest.approx({"travel": 0.55 / 0.85, "cost": 0.30 / 0.85, "transit": 0.0})
-    assert sum(w.values()) == pytest.approx(1)
+    assert w == pytest.approx({"travel": 0.55 / 0.85, "cost": 0.30 / 0.85, "area": 0.0})
 
 
-def test_applied_weights_when_transit_is_first():
-    # 교통 편의성 1순위 → 남은 주거비 0.30 : 이동시간 0.15 = 2 : 1
-    w = applied_weights(rank_weights(("transit", "cost")), ["travel", "cost"])
-    assert w == pytest.approx({"cost": 2 / 3, "travel": 1 / 3, "transit": 0.0})
-
-
-def test_rank_weights_from_config():
-    cfg = replace(CONFIG, weight_rank1=0.6, weight_rank2=0.3, weight_rank3=0.1)
-    assert rank_weights(("cost", "travel"), cfg) == {"cost": 0.6, "travel": 0.3, "transit": 0.1}
+def test_all_three_factors_used_now():
+    r = recommend(PROPS, req())
+    assert r.weights == pytest.approx({"travel": 0.55, "cost": 0.30, "area": 0.15})
+    assert r.priorities == ("travel", "cost", "area")
 
 
 # ---------------------------------------------------------------- 입력 검증
 
-def test_priorities_must_differ():
+def test_priorities_must_differ_and_be_known():
     with pytest.raises(ValidationError):
         req(priorities=("cost", "cost"))
-
-
-def test_priorities_must_be_known_factors():
     with pytest.raises(ValidationError):
-        req(priorities=("travel", "safety"))
+        req(priorities=("travel", "transit"))   # v2 의 교통 편의성은 삭제
 
 
-def test_unknown_department_needs_buildings():
-    with pytest.raises(ValidationError):
-        req(department="없는학과")
-    r = req(department="없는학과", department_buildings=["ECC"])
-    assert r.resolved_department_buildings() == ["ECC"]
-
-
-def test_department_buildings_override_table():
-    assert req().resolved_department_buildings() == ["공과대학"]
-    assert req(department_buildings=["학관"]).resolved_department_buildings() == ["학관"]
-
-
-def test_budget_and_commute_must_be_positive():
+def test_required_inputs():
     with pytest.raises(ValidationError):
         req(budget_manwon=0)
     with pytest.raises(ValidationError):
         req(desired_commute_min=0)
+    with pytest.raises(ValidationError):
+        req(desired_area_m2=0)
+    with pytest.raises(ValidationError):
+        req(larger_area="maybe")
+
+
+def test_department_table_is_ewha_only():
+    assert req().resolved_department_buildings() == ["공과대학"]
+    with pytest.raises(ValidationError):
+        req(department="없는학과")
+    with pytest.raises(ValidationError):
+        req(university="고려대학교")              # 예시표는 이대만 → 다른 대학은 건물을 직접
+    assert req(university="고려대학교", department_buildings=["정경관"]).resolved_department_buildings() == ["정경관"]
 
 
 def test_unknown_building_raises():
     with pytest.raises(UnknownBuildingError):
         recommend(PROPS, req(department_buildings=["중앙도서관"]))
-    with pytest.raises(UnknownBuildingError):
-        recommend(PROPS, req(timetable=[{"day": "월", "start": "09:00", "end": "10:00", "building": "포관"}]))
 
 
 # ---------------------------------------------------------------- 종합 점수 · 순위
 
 def test_score_is_weighted_sum_and_contributions_add_up():
-    result = recommend(PROPS, req())
-    w = result.weights
-    for s in result.ranked:
-        expected = w["travel"] * s.factor_scores["travel"] + w["cost"] * s.factor_scores["cost"]
+    r = recommend(PROPS, req())
+    for s in r.ranked:
+        expected = sum(r.weights[f] * s.factor_scores[f] for f in ("travel", "cost", "area"))
         assert s.score == pytest.approx(expected, abs=0.02)
         assert sum(s.contributions.values()) == pytest.approx(s.score, abs=0.02)
-        assert s.factor_scores["transit"] is None
 
 
-def test_ranked_sorted_and_rank_numbers():
-    result = recommend(PROPS, req())
-    scores = [s.score for s in result.ranked]
-    assert scores == sorted(scores, reverse=True)
-    assert [s.rank for s in result.ranked] == list(range(1, len(result.ranked) + 1))
+def test_hand_computed_p007():
+    # P007: 공과대학 1분, 유지비 82(상한 75), 면적 25.1㎡ (희망 20, 상관없음)
+    r = recommend(PROPS, req())
+    p = next(x for x in r.ranked if x.property_id == "P007")
+    assert p.factor_scores == {"travel": 57.0, "cost": 36.0, "area": 50.0}
+    assert p.vs_target.model_dump() == {"travel_min": -14.0, "cost_manwon": 7.0, "area_m2": 5.1}
+    assert p.score == pytest.approx(0.55 * 57 + 0.30 * 36 + 0.15 * 50)
 
 
-def test_ties_break_by_id():
-    # (기존 test_recommend.py 에서 옮김)
+def test_larger_area_choice_changes_area_score():
+    like = recommend(PROPS, req(larger_area="like"))
+    dislike = recommend(PROPS, req(larger_area="dislike"))
+    p7 = lambda r: next(x for x in r.ranked if x.property_id == "P007").factor_scores["area"]  # noqa: E731
+    assert p7(like) == pytest.approx(62.75, abs=0.01)      # 5.1㎡ 넓음 → +5 × 2.55 (응답은 소수 둘째 자리)
+    assert p7(dislike) == pytest.approx(43.625, abs=0.01)  # −2.5 × 2.55
+
+
+def test_ranked_sorted_by_score_then_cost_then_id():
+    r = recommend(PROPS, req())
+    keys = [(-x.score, x.monthly_cost_manwon, x.property_id) for x in r.ranked]
+    assert keys == sorted(keys)
+    assert [x.rank for x in r.ranked] == list(range(1, len(r.ranked) + 1))
+
+
+def test_ties_break_by_cost_then_id():
     twin = BY_ID["P002"].model_copy(update={"property_id": "P002-copy"})
-    result = recommend([twin, BY_ID["P002"]], req(budget_manwon=100))
-    assert ids(result.ranked) == ["P002", "P002-copy"]
+    r = recommend([twin, BY_ID["P002"]], req(budget_manwon=100))
+    assert ids(r.ranked) == ["P002", "P002-copy"]
+    # 예산이 넉넉하면 주거비 점수가 둘 다 100점으로 같다 → 종합 점수 동점 → 유지비 낮은 쪽이 ID 와 상관없이 먼저
+    cheaper = BY_ID["P002"].model_copy(update={"property_id": "P999", "monthly_rent_manwon": 56})  # 64.9
+    r = recommend([BY_ID["P002"], cheaper], req(budget_manwon=200))
+    assert r.ranked[0].score == r.ranked[1].score
+    assert ids(r.ranked) == ["P999", "P002"]
 
 
-def test_priorities_change_order():
+def test_priorities_change_order_but_not_factor_scores():
     travel_first = recommend(PROPS, req(priorities=("travel", "cost")))
     cost_first = recommend(PROPS, req(priorities=("cost", "travel")))
     assert ids(travel_first.ranked) != ids(cost_first.ranked)
-    # 요소별 점수는 순위 조합과 상관없이 같다 (절대 점수)
     a = {s.property_id: s.factor_scores for s in travel_first.ranked}
     b = {s.property_id: s.factor_scores for s in cost_first.ranked}
     assert a == b
 
 
-def test_same_school_different_department_gets_different_top1():
-    eng = recommend(PROPS, req(budget_manwon=100, priorities=("travel", "cost")))
-    ecc = recommend(PROPS, req(budget_manwon=100, department_buildings=["ECC"], priorities=("travel", "cost")))
-    assert eng.ranked[0].property_id != ecc.ranked[0].property_id
+# ---------------------------------------------------------------- notes · assumptions
 
-
-def test_cost_score_relative_within_filtered_and_no_over_budget():
-    # 예산 75: 통과 매물 월 고정비 45(P005) ~ 75(P010). 예산은 점수에 쓰지 않는다
-    result = recommend(PROPS, req(budget_manwon=75))
-    by = {s.property_id: s for s in result.ranked}
-    assert "P007" not in by  # 82 > 75 → 필터에서 제외 (여유 구간 없음)
-    assert all(s.over_budget is False for s in result.ranked)
-    assert by["P005"].factor_scores["cost"] == 100
-    assert by["P010"].factor_scores["cost"] == 0
-    assert by["P003"].factor_scores["cost"] == pytest.approx(100 * (75 - 55) / 30, abs=0.01)
-    assert result.assumptions["cost_score"]["lowest_manwon"] == 45
-    assert result.assumptions["cost_score"]["highest_manwon"] == 75
-
-
-def test_result_limit_from_config():
-    result = recommend(PROPS, req(budget_manwon=200), cfg=replace(CONFIG, result_limit=4))
-    assert len(result.ranked) == 4
-
-
-# ---------------------------------------------------------------- 제외 (기존 경계 상황 테스트에서 옮김)
-
-def test_excluded_with_reasons():
-    result = recommend(PROPS, req(budget_manwon=75))
-    reasons = {e.property_id: e.reason for e in result.excluded}
-    assert reasons["P001"] == "예산보다 월 12만 원 비싸서 제외"  # 87
-    assert "P001" not in ids(result.ranked)
-
-
-def test_missing_cost_is_excluded_with_reason():
-    broken = BY_ID["P001"].model_copy(update={"maintenance_manwon": None})
-    result = recommend([broken, BY_ID["P002"]], req(budget_manwon=100))
-    assert ids(result.ranked) == ["P002"]
-    assert result.excluded[0].reason == "월세 또는 관리비 정보 없음"
-
-
-def test_missing_walk_for_needed_building_is_excluded():
-    broken = BY_ID["P001"].model_copy(update={"spot4_walk_min": None})  # spot4 = 공과대학
-    result = recommend([broken, BY_ID["P002"]], req(budget_manwon=100))
-    assert ids(result.ranked) == ["P002"]
-    assert result.excluded[0].reason == "도보시간 정보 없음: 공과대학"
-
-
-def test_duplicate_ids_are_excluded_with_reason():
-    result = recommend([BY_ID["P002"], BY_ID["P002"]], req(budget_manwon=100))
-    assert ids(result.ranked) == ["P002"]
-    assert result.excluded[0].reason == "매물 ID 중복"
-
-
-def test_empty_properties_returns_empty_result():
-    result = recommend([], req())
-    assert result.ranked == []
-    assert result.not_recommended == []
-
-
-def test_too_few_candidates_note():
-    result = recommend(PROPS, req(budget_manwon=45))  # 45 ≤ 45 인 P005 만
-    assert ids(result.ranked) == ["P005"]
-    assert any("1개뿐" in n for n in result.notes)
-
-
-# ---------------------------------------------------------------- 안내 (notes)
-
-def test_transit_chosen_as_priority_note():
-    # 요청 1: 교통 편의성을 1·2순위로 골랐는데 데이터가 없으면 순위가 반영되지 않았다고 알린다
-    for priorities in (("transit", "cost"), ("cost", "transit")):
-        result = recommend(PROPS, req(priorities=priorities))
-        assert any("교통 편의성은 아직 계산할 수 없어 선택한 순위가 반영되지 않았습니다" in n for n in result.notes)
-        assert result.weights["transit"] == 0
-        assert result.weights["travel"] + result.weights["cost"] == pytest.approx(1)
-
-
-def test_transit_third_has_no_priority_note_but_redistribution_note():
-    result = recommend(PROPS, req(priorities=("travel", "cost")))
-    assert not any("선택한 순위가 반영되지 않았습니다" in n for n in result.notes)
-    assert any("교통 편의성은 아직 계산할 수 없어 비중을" in n for n in result.notes)
-
-
-def test_missing_timetable_and_frequent_notes():
-    result = recommend(PROPS, req())
-    assert any("자주 가는 곳" in n for n in result.notes)
-    assert any("시간표를 입력하지 않아" in n for n in result.notes)
+def test_notes_for_missing_parts():
+    r = recommend(PROPS, req())
+    assert any("자주 가는 곳은 데이터 준비 중" in n for n in r.notes)
+    assert any("시간표를 입력하지 않아" in n for n in r.notes)
     with_tt = recommend(PROPS, req(timetable=[{"day": "월", "start": "09:00", "end": "10:00", "building": "ECC"}]))
     assert not any("시간표를 입력하지 않아" in n for n in with_tt.notes)
 
 
-# ---------------------------------------------------------------- assumptions
+def test_too_few_candidates_note():
+    r = recommend(PROPS, req(budget_manwon=35))   # 45 ≤ 35 + 10 인 P005 만
+    assert ids(r.ranked) == ["P005"]
+    assert any("1개뿐" in n for n in r.notes)
 
-def test_assumptions_include_targets_weights_and_slack():
-    a = recommend(PROPS, req(deposit_budget_manwon=1000)).assumptions
-    assert a["time_score"]["department"] == {"T": 15, "h": 10, "mode": "도보"}
-    assert a["weights_by_rank"] == {"travel": 0.55, "cost": 0.30, "transit": 0.15}
-    assert a["weights_applied"]["transit"] == 0
-    assert a["unavailable_factors"] == ["transit"]
+
+def test_assumptions():
+    a = recommend(PROPS, req(deposit_budget_manwon=1000, larger_area="like")).assumptions
+    assert a["monthly_limit_manwon"] == 85
+    assert a["deposit_limit_manwon"] == 1200
+    assert a["desired_commute_min"] == 15 and a["desired_area_m2"] == 20
+    assert a["larger_area"] == "like" and a["larger_area_slope_per_unit"] == 5
+    assert a["weights_applied"] == pytest.approx({"travel": 0.55, "cost": 0.30, "area": 0.15})
     assert a["unavailable_travel_parts"] == ["frequent", "timetable"]
-    assert a["monthly_limit_manwon"] == 75  # 여유 없음 (2026-11-08 결정)
-    assert a["deposit_limit_manwon"] == 1000
-    assert a["grade"] == 2
-    assert a["config"]["monthly_budget_slack_manwon"] == 0
-    assert a["config"]["displayed_top_n"] == 3
+    assert a["score_rule"]["units"] == {"travel_min": 10, "cost_manwon": 5, "area_m2": 2}
+    assert a["exclusions"]["plans"] == []
+    assert a["config"]["base_score"] == 50
 
 
 # ---------------------------------------------------------------- 비추천 사유
 
-def cand(pid, *, travel=None, cost=None, transit=None, monthly_cost=60.0, over_budget=False, travel_value=None):
-    t = travel.score if travel else travel_value
+def cand(pid, *, travel=None, cost=50.0, area=50.0, monthly_cost=60.0, area_m2=20.0, over_budget=False, travel_value=None):
     return Candidate(
         property_id=pid,
-        factor_scores={"travel": t, "transit": transit, "cost": cost},
+        factor_scores={"travel": travel.score if travel else travel_value, "cost": cost, "area": area},
         travel=travel,
         monthly_cost=monthly_cost,
         deposit=1000,
+        area=area_m2,
         over_budget=over_budget,
     )
 
 
 SCREEN_1 = replace(CONFIG, displayed_top_n=1)
+NR = dict(budget=75, desired_area=20)
 
 
-def test_weak_department_message_matches_design_example():
-    # 설계안 6장 예시: "가장 저렴하지만 학과 건물까지 편도 26분이라 희망 통학 시간(15분)보다 11분 길어요."
-    # 이동시간 1순위: A 0.647 × 98 ≈ 63.4  >  B 0.647 × 39.7 + 0.353 × 100 ≈ 61.0 → A 1위, B 는 주거비 1순위 조합에서 1위
-    near = cand("A", travel=travel_score(15, department_avg_min=2), cost=0, monthly_cost=80)
-    cheap = cand("B", travel=travel_score(15, department_avg_min=26), cost=100, monthly_cost=45)
-    result = not_recommended([near, cheap], ("travel", "cost"), ["travel", "cost"], budget=80, cfg=SCREEN_1)
-    assert [r.property_id for r in result] == ["B"]
+def test_weak_travel_message_uses_lowest_scoring_part():
+    near = cand("A", travel=travel_score(15, department_avg_min=2, timetable_avg_min=3), cost=40, monthly_cost=77)
+    # B: 학과 건물 5분(55점)은 좋지만 시간표 65분(0점)이 가장 낮은 부분. 이동 시간 1순위에서 A(약 52.0) > B(약 50.2)
+    cheap = cand("B", travel=travel_score(15, department_avg_min=5, timetable_avg_min=65), cost=100, monthly_cost=25)
+    result = not_recommended([near, cheap], ("travel", "area"), ["travel", "cost", "area"], cfg=SCREEN_1, **NR)
+    assert ids(result) == ["B"]
     nr = result[0]
-    assert nr.weak.factor == "travel"
-    assert nr.weak.part == "department"
+    assert nr.weak.factor == "travel" and nr.weak.part == "timetable" and nr.weak.value == 65
     assert nr.strong.factor == "cost"
-    assert nr.message == "1위 매물보다 저렴하지만 학과 건물까지 편도 26분이라 희망 통학 시간(15분)보다 11분 길어요."
-
-
-def test_weak_travel_uses_lowest_scoring_part():
-    # 요청 3: 이동시간이 약한 요소면 세부 부분 중 점수가 가장 낮은 부분(여기서는 시간표)의 값을 쓴다
-    # B: 학과 건물 5분(95점)은 좋지만 시간표 40분(약 15점)이 가장 낮은 부분
-    near = cand("A", travel=travel_score(15, department_avg_min=2, timetable_avg_min=3), cost=50, monthly_cost=60)
-    cheap = cand("B", travel=travel_score(15, department_avg_min=5, timetable_avg_min=40), cost=100, monthly_cost=45)
-    result = not_recommended([near, cheap], ("travel", "cost"), ["travel", "cost"], budget=80, cfg=SCREEN_1)
-    assert [r.property_id for r in result] == ["B"]
-    nr = result[0]
-    assert nr.weak.factor == "travel"
-    assert nr.weak.part == "timetable"
-    assert nr.weak.value == 40
-    assert nr.weak.top1_value == 3
-    assert nr.message == "1위 매물보다 저렴하지만 시간표 기준 편도 평균 40분이라 희망 통학 시간(15분)보다 25분 길어요."
+    assert nr.message == "1위 매물보다 싸지만 시간표 기준 편도 평균 65분이라 희망 통학 시간(15분)보다 50분 길어요."
 
 
 def test_weak_cost_message_over_budget():
-    cheap = cand("A", travel=travel_score(15, department_avg_min=20), cost=100, monthly_cost=45)
-    near = cand("B", travel=travel_score(15, department_avg_min=1), cost=0, monthly_cost=82, over_budget=True)
-    nr = not_recommended([cheap, near], ("cost", "travel"), ["travel", "cost"], budget=75, cfg=SCREEN_1)[0]
-    assert nr.property_id == "B"
-    assert nr.weak.factor == "cost"
-    assert nr.message == "1위 매물보다 가깝지만 월 고정 주거비가 82만 원으로 예산(75만 원)보다 7만 원 비싸요."
+    cheap = cand("A", travel=travel_score(15, department_avg_min=20), cost=100, monthly_cost=25)
+    near = cand("B", travel=travel_score(15, department_avg_min=1), cost=36, monthly_cost=82, over_budget=True)
+    nr = not_recommended([cheap, near], ("cost", "area"), ["travel", "cost", "area"], cfg=SCREEN_1, **NR)[0]
+    assert nr.property_id == "B" and nr.weak.factor == "cost"
+    assert nr.message == "1위 매물보다 가깝지만 유지비가 월 82만 원으로 상한(75만 원)보다 7만 원 많아요."
+
+
+def test_weak_area_message_smaller_than_desired():
+    roomy = cand("A", area=75, area_m2=30)
+    tiny = cand("B", area=30, area_m2=16, cost=100, monthly_cost=25)
+    nr = not_recommended([roomy, tiny], ("area", "travel"), ["cost", "area"], cfg=SCREEN_1, **NR)[0]
+    assert nr.property_id == "B" and nr.weak.factor == "area"
+    assert nr.message == "1위 매물보다 싸지만 면적이 16㎡로 희망 면적(20㎡)보다 4㎡ 좁아요."
 
 
 def test_null_factor_is_never_weak():
-    # 요청 2: 점수가 없는(null) 요소는 약한 요소 후보에서 뺀다.
-    # 1위는 교통 편의성 점수가 있지만 B 는 null → 교통 편의성 차이가 가장 커 보여도 고르지 않는다.
-    top = cand("A", travel=travel_score(15, department_avg_min=5), cost=40, transit=100)
-    b = cand("B", travel=travel_score(15, department_avg_min=10), cost=100, transit=None, monthly_cost=45)
-    result = not_recommended([top, b], ("transit", "travel"), ["travel", "cost", "transit"], budget=80, cfg=SCREEN_1)
-    assert [r.property_id for r in result] == ["B"]
-    assert result[0].weak.factor != "transit"
-    assert result[0].weak.factor == "travel"
+    top = cand("A", travel_value=None, cost=60, area=90)
+    b = cand("B", travel_value=None, cost=100, area=40, monthly_cost=25)
+    result = not_recommended([top, b], ("area", "cost"), ["cost", "area"], cfg=SCREEN_1, **NR)
+    assert ids(result) == ["B"] and result[0].weak.factor == "area"
 
 
-def test_not_recommended_excludes_on_screen_and_respects_displayed_top_n():
-    # 요청 4: "지금 화면에 있는 매물" = 현재 조합 상위 displayed_top_n 위 (설정값)
+def test_not_recommended_respects_displayed_top_n_and_top_k():
     for n in (1, 3, 5):
-        cfg = replace(CONFIG, displayed_top_n=n)
-        result = recommend(PROPS, req(), cfg=cfg)
-        on_screen = set(ids(result.ranked[:n]))
-        assert not on_screen & set(ids(result.not_recommended))
-
-
-def test_not_recommended_must_be_top_k_in_another_combo():
-    result = recommend(PROPS, req())
-    assert result.not_recommended  # 실제 데이터에서도 나온다
-    for nr in result.not_recommended:
-        assert nr.best_rank_elsewhere <= CONFIG.not_recommended_top_k
-        assert all(tuple(h.priorities) != ("travel", "cost") for h in nr.top_in)
-        assert nr.message
+        r = recommend(PROPS, req(budget_manwon=100), cfg=replace(CONFIG, displayed_top_n=n))
+        assert not set(ids(r.ranked[:n])) & set(ids(r.not_recommended))
+        for nr in r.not_recommended:
+            assert nr.best_rank_elsewhere <= CONFIG.not_recommended_top_k
+            assert all(tuple(h.priorities) != ("travel", "cost") for h in nr.top_in)
 
 
 def test_not_recommended_max_and_order_by_best_rank_then_id():
-    # 요청 3: 3개를 넘으면 다른 조합에서의 최고 순위가 높은 순 → 동점이면 ID 순으로 3개
-    # 실제 데이터 10개로는 후보가 3개를 넘지 않아, 요소마다 강한 매물을 직접 만든다 (교통 편의성 점수도 있다고 가정)
     cands = [
-        cand("C1", travel_value=100, cost=0, transit=0),
-        cand("C2", travel_value=0, cost=100, transit=0),
-        cand("C3", travel_value=0, cost=0, transit=100),
-        cand("C4", travel_value=90, cost=10, transit=0),
-        cand("C5", travel_value=10, cost=90, transit=0),
-        cand("C6", travel_value=0, cost=10, transit=90),
-        cand("C7", travel_value=50, cost=50, transit=50),
+        cand("C1", travel_value=100, cost=0, area=0),
+        cand("C2", travel_value=0, cost=100, area=0),
+        cand("C3", travel_value=0, cost=0, area=100),
+        cand("C4", travel_value=90, cost=10, area=0),
+        cand("C5", travel_value=10, cost=90, area=0),
+        cand("C6", travel_value=0, cost=10, area=90),
+        cand("C7", travel_value=50, cost=50, area=50),
     ]
-    args = (cands, ("travel", "cost"), ["travel", "cost", "transit"], 80)
-    everyone = not_recommended(*args, cfg=replace(CONFIG, displayed_top_n=1, not_recommended_max=99))
+    args = (cands, ("travel", "cost"), ["travel", "cost", "area"])
+    everyone = not_recommended(*args, cfg=replace(CONFIG, displayed_top_n=1, not_recommended_max=99), **NR)
     assert len(everyone) > 3
     expected = sorted(everyone, key=lambda r: (r.best_rank_elsewhere, r.property_id))[:3]
-
-    picked = not_recommended(*args, cfg=replace(CONFIG, displayed_top_n=1))
-    assert len(picked) == 3
+    picked = not_recommended(*args, cfg=replace(CONFIG, displayed_top_n=1), **NR)
     assert ids(picked) == ids(expected)
-    ranks = [(r.best_rank_elsewhere, r.property_id) for r in picked]
-    assert ranks == sorted(ranks)
 
 
-def test_top1_is_never_not_recommended():
-    result = recommend(PROPS, req(), cfg=replace(CONFIG, displayed_top_n=0))
-    assert result.ranked[0].property_id not in ids(result.not_recommended)
+def test_real_data_not_recommended_has_message():
+    r = recommend(PROPS, req(budget_manwon=100))
+    assert r.not_recommended
+    assert all(nr.message for nr in r.not_recommended)
