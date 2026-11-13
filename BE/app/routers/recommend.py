@@ -11,19 +11,32 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.buildings import aliases_for
+from app.config import get_settings
 from app.data import load_properties, load_travel_times
+from app.exclusions import KakaoPlaceSearcher
 from app.scoring import RecommendRequest, RecommendResult, UnknownBuildingError, recommend
+from app.tools.kakao import KakaoClient
 
 router = APIRouter(prefix="/recommend", tags=["recommend"])
 
 
 @router.post("", response_model=RecommendResult)
 def recommend_integrated(req: RecommendRequest) -> RecommendResult:
+    # 챗봇 장소 조건이 있고 카카오 키가 있을 때만 장소 검색을 연결한다 (키가 없으면 notes 로 안내)
+    uses_places = any(c.uses_places for plan in req.exclusions for c in plan.conditions)
+    key = get_settings().kakao_rest_api_key if uses_places else None
+    client = KakaoClient(key) if key else None
     try:
         props = load_properties()
-        return recommend(props, req, travel=load_travel_times(props))
+        return recommend(
+            props, req, travel=load_travel_times(props),
+            searcher=KakaoPlaceSearcher(client) if client else None,
+        )
     except UnknownBuildingError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    finally:
+        if client:
+            client.close()
 
 
 class BuildingCoverage(BaseModel):

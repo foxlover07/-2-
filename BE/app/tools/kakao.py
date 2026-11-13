@@ -74,6 +74,35 @@ class KakaoClient:
         res.raise_for_status()
         return res.json()
 
+    def search_places_near(
+        self,
+        *,
+        center: LatLng,
+        radius_m: int,
+        query: str | None = None,
+        category_group_code: str | None = None,
+        page: int = 1,
+        size: int = 15,
+        sort: str = "distance",
+    ) -> dict:
+        """반경 안 장소 검색 (추천 제외 조건 도구용). query 가 있으면 키워드 검색, 없으면 카테고리 검색.
+
+        x = 경도, y = 위도, radius 0~20000m. 문서마다 distance(m, 문자열)가 붙는다.
+        """
+        if not query and not category_group_code:
+            raise ValueError("query 또는 category_group_code 가 필요하다")
+        params: dict = {"x": center.lng, "y": center.lat, "radius": radius_m, "page": page, "size": size, "sort": sort}
+        if category_group_code:
+            params["category_group_code"] = category_group_code
+        if query:
+            params["query"] = query
+            path = "/v2/local/search/keyword.json"
+        else:
+            path = "/v2/local/search/category.json"
+        res = self._get(path, params)
+        res.raise_for_status()
+        return res.json()
+
     def walk(self, start: LatLng, end: LatLng, route_mode: str = "BROAD_FIRST") -> WalkResult:
         if route_mode not in ROUTE_MODES:
             raise ValueError(f"route_mode 는 {ROUTE_MODES} 중 하나")

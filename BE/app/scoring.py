@@ -13,7 +13,7 @@
 
 import math
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from itertools import permutations
 from typing import Annotated, Any, Literal
@@ -21,6 +21,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.buildings import resolve
+from app.exclusions import ExclusionPlan, ExclusionRunner, PlaceSearcher
 from app.models import Property
 from app.scoring_config import CONFIG, DEPARTMENT_BUILDINGS, EWHA, ScoringConfig
 
@@ -324,6 +325,9 @@ class RecommendRequest(BaseModel):
     desired_area_m2: Annotated[float, Field(gt=0, description="희망 면적 (㎡)")]
     larger_area: LargerArea = Field(default="neutral", description="희망보다 넓은 면적: like 좋음 / neutral 상관없음 / dislike 싫음")
     timetable: list[ClassSlot] = Field(default_factory=list)
+    exclusions: list[ExclusionPlan] = Field(
+        default_factory=list, description="사용자가 승인한 챗봇 확인 계획 (5장, 챗봇 미완성). 없으면 빈 목록"
+    )
 
     @field_validator("priorities")
     @classmethod
@@ -622,27 +626,26 @@ def not_recommended(
 
 # ---------------------------------------------------------------- 추천 (LLM 없이 입력 → 결과)
 
-# 챗봇 제외 조건을 매물마다 확인하는 함수 (app.exclusions). 매물 → (빠질 조건 이름, 사유) 또는 None.
-ExclusionCheck = Callable[[Property], tuple[str, str] | None]
-
-
 def recommend(
     properties: Iterable[Property],
     req: RecommendRequest,
     *,
     travel: TravelTimes | None = None,
-    exclusion_check: ExclusionCheck | None = None,
-    exclusion_notes: Callable[[], list[str]] | None = None,
-    exclusion_assumptions: dict[str, Any] | None = None,
+    searcher: PlaceSearcher | None = None,
+    exclusion_cache: dict | None = None,
     cfg: ScoringConfig = CONFIG,
 ) -> RecommendResult:
-    """입력 → 필터 → 요소별 절대 점수 → 1·2·3순위 가중합 → 순위 + 비추천 사유 + assumptions."""
+    """입력 → 필터 → 요소별 절대 점수 → 1·2·3순위 가중합 → 순위 + 비추천 사유 + assumptions.
+
+    searcher: 챗봇 장소 조건(nearby_count, nearest_distance)을 확인할 장소 검색 (없으면 장소 조건은 확인하지 않고 안내).
+    """
     # 2장 필터 1: 요청한 대학의 매물만 (다른 대학 매물은 목록에 넣지 않는다)
     properties = [p for p in properties if p.university == req.university]
     travel = travel if travel is not None else travel_times_from_csv(properties)
     travel = {p.property_id: travel.get(p.property_id, {}) for p in properties}
     notes: list[str] = []
     excluded: list[Excluded] = []
+    runner = ExclusionRunner(req.exclusions, searcher, cfg, exclusion_cache) if req.exclusions else None
 
     # 건물 이름을 표준 이름으로 (줄임말·띄어쓰기·가운뎃점 차이, app.buildings)
     known = sorted({name for row in travel.values() for name in row})
@@ -687,7 +690,7 @@ def recommend(
         if reason := deposit_exclusion_reason(p.deposit_manwon, req.deposit_budget_manwon, cfg):
             excluded.append(Excluded(property_id=pid, reason=reason, stage="deposit"))
             continue
-        if exclusion_check is not None and (hit := exclusion_check(p)):
+        if runner is not None and (hit := runner.check(p)):
             excluded.append(Excluded(property_id=pid, reason=hit[1], stage="exclusion", condition=hit[0]))
             continue
 
@@ -725,8 +728,8 @@ def recommend(
             over_budget=is_over_budget(cost, req.budget_manwon),
         ))
 
-    if exclusion_notes is not None:
-        notes.extend(exclusion_notes())
+    if runner is not None:
+        notes.extend(runner.notes())
     exclusion_counts: dict[str, int] = {}
     for e in excluded:
         if e.stage == "exclusion" and e.condition:
@@ -825,7 +828,7 @@ def recommend(
             "timetable_days": len(_by_day(timetable)),
             "renamed_buildings": [{"from": f, "to": t} for f, t in renamed],
             "mode": "도보",
-            "exclusions": exclusion_assumptions or {"plans": [], "note": "챗봇 제외 조건 없음"},
+            "exclusions": runner.assumptions() if runner is not None else {"plans": [], "note": "챗봇 제외 조건 없음"},
             "config": asdict(cfg),
         },
         notes=notes,
