@@ -84,13 +84,25 @@ BE/
 │   ├── buildings.py         # 시간표 건물 이름 정규화·줄임말
 │   ├── scoring_config.py    # 추천 설정값 (통합안 6장) + 학과 → 건물 예시표
 │   ├── scoring.py           # 추천 (필터, 요소별 점수, 종합 점수, 비추천 사유)
-│   ├── exclusions.py        # 챗봇 제외 조건: 확인 계획 형식 + 확인 도구 실행 (챗봇은 미완성)
+│   ├── exclusions.py        # 챗봇 제외 조건: 확인 계획 형식 + 확인 도구 실행
+│   ├── agent/               # 챗봇 (LangGraph + Gemini/EXAONE) — 아래 '챗봇' 장
+│   │   ├── rules.py         #   docs/chatbot-rules.md 를 장 단위로 읽어 프롬프트에 넣는다
+│   │   ├── schemas.py       #   대화 조건(AgentProfile), LLM 출력 형식, API 형식
+│   │   ├── tools.py         #   조건 반영·추천 호출·기준 대비 문장·제외 조건 (서버 검증)
+│   │   ├── llm.py           #   Gemini / EXAONE / 테스트용 가짜 LLM
+│   │   └── graph.py         #   흐름, 응답 조립(바뀐 것 → 요약 → 예산 초과 → 안내), 숫자 검증
 │   ├── tools/               # Kakao API (장소 검색·도보 경로·주소)
 │   └── routers/
 │       ├── properties.py    # GET /properties, GET /properties/{property_id}
-│       └── recommend.py     # POST /recommend, GET /recommend/buildings
+│       ├── recommend.py     # POST /recommend, GET /recommend/buildings
+│       └── agent.py         # POST /agent/chat
 ├── pipeline/                # 매물 수집·정규화, 도보 경로 (오프라인 스크립트)
-├── scripts/ask.py           # LLM 호출 실험
+├── eval/                    # 챗봇 평가 케이스(cases/), 형식 검사, 실행기 — eval/README.md
+├── scripts/
+│   ├── ask.py               # LLM 호출 실험
+│   ├── check_llm.py         # 챗봇 LLM 연결·속도 확인 (Gemini / EXAONE)
+│   ├── check_eval_cases.py  # 평가 케이스 형식 검사 (LLM 안 부름)
+│   └── eval_agent.py        # 평가 실행 (실제 LLM)
 └── tests/
     ├── test_properties.py
     ├── test_scoring_rule.py     # 공통 규칙 · 교환비 · 3.4장 예시표 · 설정값
@@ -99,6 +111,10 @@ BE/
     ├── test_scoring_combine.py  # 종합 점수 · 비추천 사유 · assumptions
     ├── test_exclusions.py       # 챗봇 제외 조건 도구·실행
     ├── test_recommend_api.py    # POST /recommend
+    ├── test_agent.py            # 챗봇 흐름 (가짜 LLM)
+    ├── test_eval_runner.py      # 평가 판정: 정답만 내는 가짜 LLM 이면 모든 케이스 통과
+    ├── test_eval_cases.py       # 케이스 형식 · 규칙 문서 기본값 = 코드 기본값
+    ├── test_llm_exaone.py       # LLM 연결 (재시도·대체 모델·JSON)
     ├── test_jibsa_adapter.py
     └── test_kakao.py
 ```
@@ -151,9 +167,9 @@ v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /r
 - **학과 → 건물:** `DEPARTMENT_BUILDINGS`는 이대 **예시값 3개뿐이라 팀 확인이 필요하다.** 다른 대학과 표에 없는 학과는 `department_buildings`로 직접 입력한다.
 - **학년:** 받기만 하고 계산에는 쓰지 않는다.
 
-### 챗봇 제외 조건 (`app/exclusions.py`) — 챗봇은 미완성
+### 챗봇 제외 조건 (`app/exclusions.py`)
 
-사용자가 승인한 **확인 계획**을 `exclusions`로 넣으면 코드가 매물마다 확인한다. 말 → 계획을 만드는 챗봇(LLM)은 아직 없어서, 지금은 계획 JSON을 직접 넣어 테스트한다.
+**확인 계획**을 `exclusions`로 넣으면 코드가 매물마다 확인한다. 챗봇(`POST /agent/chat`)이 말 → 계획을 만들어 생활 프로필의 `exclusions`에 넣는다. 계획 JSON을 직접 넣어 테스트할 수도 있다.
 
 | 도구 | 하는 일 | 필요한 칸 |
 | --- | --- | --- |
@@ -240,8 +256,25 @@ v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /r
 
 - **학과 → 건물 표:** 이대 예시 3개뿐이다. 다른 대학은 사용자가 건물을 고른다.
 - **매물 좌표:** 레포의 PoC 매물 10개는 좌표가 비어 있다.
-- **챗봇:** 미완성. 확인 도구의 기본값(소음 → 키워드·반경·개수 등), LLM 모델, 프롬프트, 확인 화면을 정해야 한다.
+- **챗봇:** BE 는 연결했다(아래 '챗봇'). FE 채팅 패널과 생활 프로필 동기화는 아직이다.
 - **교환비:** 시장 가격으로 정한 값이라 학생이 느끼는 통학의 무게보다 작을 수 있다. "A가 B보다 위여야 한다" 형식의 테스트 케이스로 확인한다.
 - **도로·소음:** 카카오 장소 검색으로는 확인할 수 없다. 추후 도구로 추가한다.
 - **대중교통 시간:** 지금은 도보만 쓴다.
 - **관리비 정보가 없는 매물:** 지금은 "월세 또는 관리비 정보 없음"으로 제외한다.
+
+## 챗봇 (`app/agent/`, `POST /agent/chat`)
+
+규칙은 `docs/chatbot-rules.md`(챗봇 규칙 문서)가 원본이다. 프롬프트는 이 문서의 장을 읽어 만든다.
+
+```
+추출(LLM) → 조건 반영(서버 검증) → [기호가 있으면] 제외 계획(LLM) → 검증 → 미리보기
+          → 필수 조건 확인 → 추천·가정·비교·설명(통합안 엔진) → 응답: 바뀐 것 → 요약(LLM, 숫자 검증) → 예산 초과 → 안내
+```
+
+- **LLM 이 하는 일은 세 가지:** 말 → 의도·조건, 기호 → 제외 계획, 계산 결과 → 요약 문장. 점수·순위·제외 판단·환산은 코드가 한다.
+- **코드 문장으로만 답하는 경우 (LLM 설명 없음):** 인사, 범위 밖 거절(안내처 포함), 필수 조건 되묻기(2개까지), 0개가 남는 제외 조건. 거절·숫자 규칙은 하나도 틀리면 안 되므로 LLM 에 맡기지 않는다.
+- **제외 조건:** 확인 질문 없이 바로 적용하고 답을 "바뀐 것:"으로 시작한다. 적용하면 0개가 남을 때만 적용하지 않고 묻는다. 방음·곰팡이 같은 현장 확인 항목은 조건으로 만들지 못하게 서버가 막는다.
+- **숫자 검증:** LLM 요약에 계산 결과에 없는 숫자가 있으면 코드가 만든 요약으로 바꾼다.
+- **LLM 설정:** `.env.example` 의 `GEMINI_*`, `EXAONE_*`. 키가 없거나 호출이 실패해도 500 을 내지 않고 `status` 로 알린다. 연결 확인: `uv run python scripts/check_llm.py`.
+- **평가:** `eval/README.md`. 형식 검사는 pytest 에 들어 있고, 실제 LLM 평가는 `uv run python scripts/eval_agent.py --label 1차`.
+- **대화 상태:** 서버 메모리(session_id 별). 서버를 다시 켜면 사라진다. FE 가 매 턴 생활 프로필을 보내면 그것을 지금 조건으로 쓴다.

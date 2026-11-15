@@ -49,3 +49,8 @@ DB/experimental/
 
 # 디자인 시안 등 압축 파일 (로컬 보관)
 *.zip
+
+# 챗봇 턴 기록·평가 원본 (매물 주소 등 수집 데이터가 들어가므로 커밋하지 않는다. 요약 표 *.md 만 커밋)
+BE/logs/
+BE/eval/results/*.json
+BE/eval/results/*.jsonl

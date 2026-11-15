@@ -312,12 +312,12 @@ class RecommendRequest(BaseModel):
     """POST /recommend 입력 (통합안 1.2장). v2 필드 이름을 그대로 쓰고 면적을 더했다."""
 
     university: Annotated[str, Field(min_length=1, description="이 대학 매물만 추천한다 (매물 CSV 의 university 값)")] = EWHA
-    department: Annotated[str, Field(min_length=1)]
+    department: Annotated[str | None, Field(description="학과. 학과 건물을 직접 주면 없어도 된다")] = None
     department_buildings: Annotated[
         list[str] | None,
         Field(min_length=1, description="학과 건물. 비우면 학과 → 건물 예시표로 채운다 (이대만)"),
     ] = None
-    grade: Annotated[int, Field(ge=1, description="학년. 지금은 받기만 하고 계산에는 쓰지 않는다")]
+    grade: Annotated[int | None, Field(ge=1, description="학년. 받기만 하고 계산에는 쓰지 않는다 (선택, 11/14)")] = None
     priorities: tuple[Factor, Factor] = Field(description="1순위, 2순위 (travel / cost / area). 3순위는 자동")
     budget_manwon: Annotated[float, Field(gt=0, description="유지비(월세 + 관리비) 상한, 만원")]
     deposit_budget_manwon: Annotated[float | None, Field(ge=0, description="보증금 상한 (만원). 없으면 보증금 필터 생략")] = None

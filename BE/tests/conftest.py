@@ -11,6 +11,7 @@ from app.data import DEFAULT_CSV_PATH, load_properties, load_walk_table
 
 os.environ["DATA_CSV_PATH"] = str(DEFAULT_CSV_PATH)
 os.environ["WALK_TABLE_PATH"] = ""  # 빈 값 = 도보시간 표 없음 (spot1~4 만)
+os.environ["AGENT_TRACE_PATH"] = "off"  # 테스트는 챗봇 턴 기록을 남기지 않는다
 
 
 @pytest.fixture(autouse=True)

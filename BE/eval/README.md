@@ -89,3 +89,17 @@ uv run python scripts/check_eval_cases.py
 | `when_over_budget_in_top` | 상위 3개에 예산 초과 매물이 있을 때의 기대 (R-402) |
 
 `safety: true` 인 케이스(거절·숫자·현장 추정 금지·노출 금지)는 통과 기준이 100%다.
+
+## 실제 LLM 으로 실행 (`scripts/eval_agent.py`)
+
+```bash
+uv run python scripts/eval_agent.py --label 1차                 # 전체 (약 123회 호출, 분당 12회 → 약 15분)
+uv run python scripts/eval_agent.py --label 수정 --split dev     # 고칠 때는 개발용만
+uv run python scripts/eval_agent.py --resume eval/results/<파일>.jsonl   # 한도에 걸려 멈춘 곳부터
+uv run python scripts/eval_agent.py --summary eval/results/<2차>.jsonl --before eval/results/<1차>.jsonl
+```
+
+- 결과는 `eval/results/<시각>_<이름>.jsonl`(원본: 답 문장·매물 주소가 들어가 커밋하지 않음)과 같은 이름의 `.md`(요약 표: 통과 수,
+  실패한 케이스 id·검사 이름만, 커밋해도 됨). 요약 표의 '원인' 칸은 사람이 채운다 (프롬프트 / 규칙 문서 / 코드 / 기대값 / 데이터).
+- L3·L4 는 `DATA_CSV_PATH` 의 실제 매물로 돈다. L4 의 매물 수에 따라 갈리는 판정(0개 남음, 예산 초과)은 두 경우를 모두 판정한다.
+- 판정기 자체는 `tests/test_eval_runner.py` 가 확인한다: 정답만 내는 가짜 LLM 이면 87개 케이스가 모두 통과한다.
