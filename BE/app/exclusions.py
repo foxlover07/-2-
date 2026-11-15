@@ -136,21 +136,6 @@ def _main_use(p: Property) -> str | None:
     return "기타"
 
 
-def _structure(p: Property) -> str | None:
-    v = _bld(p, p.bld_structure)
-    if not v:
-        return None
-    if "철근콘크리트" in v or "철골콘크리트" in v:
-        return "철근콘크리트"
-    if any(k in v for k in ("벽돌", "블록", "조적")):
-        return "조적(벽돌·블록)"
-    if "목구조" in v:
-        return "목조"
-    if "철골" in v:
-        return "철골"
-    return "기타"
-
-
 def _age(p: Property, cfg: ScoringConfig) -> float | None:
     year = _bld(p, p.bld_use_approval_year)
     if year is None:
@@ -190,10 +175,6 @@ BUILDING_FIELDS: dict[str, FieldSpec] = {
         "근린생활시설은 이른바 근생 원룸 (주거용이 아니라 전입신고·대출이 막힐 수 있음)",
         ("주거용(단독·공동주택)", "근린생활시설", "업무시설(오피스텔)", "기타"),
     ),
-    "structure": FieldSpec(
-        "건물 구조", "", "cat", lambda p, c: _structure(p), "방음 간접 지표 (조적·목조는 철근콘크리트보다 소리가 잘 샌다)",
-        ("철근콘크리트", "조적(벽돌·블록)", "목조", "철골", "기타"),
-    ),
     "floors_above": FieldSpec("건물 지상 층수", "층", "num", lambda p, c: _bld(p, p.bld_floors_above), "건축물대장 지상 층수"),
     "elevators": FieldSpec("승강기 수", "대", "num", lambda p, c: _bld(p, p.bld_elevators), "승용 승강기 수"),
     "parking_spaces": FieldSpec("주차 대수", "대", "num", lambda p, c: _bld(p, p.bld_parking), "건물 전체 주차 대수"),
@@ -203,7 +184,27 @@ BUILDING_FIELDS: dict[str, FieldSpec] = {
 AMENITIES: dict[str, str] = {
     "convenience": "편의점", "supermarket": "마트·슈퍼", "laundry": "세탁소", "laundromat": "코인빨래방",
     "pharmacy": "약국", "clinic": "병원·의원", "bar": "술집", "karaoke": "노래방",
+    # 추가 예정 (공공데이터, 칸이 생기면 자동으로 쓰인다): 헬스장 = 인허가 체력단련장업, 공원 = 전국도시공원정보표준데이터,
+    # 지하철역 = 전국도시철도역사정보표준데이터, 버스정류장 = 서울시 버스정류소 위치정보
+    "gym": "헬스장", "park": "공원", "subway": "지하철역", "bus_stop": "버스정류장",
 }
+
+# 매물에서 직접 봐야 하는 것: 데이터로 추정하지 않고 집 보러 갈 때 확인할 것으로만 안내한다 (11/15 결정)
+ONSITE_CHECKS: dict[str, str] = {
+    "방음": "벽을 두드려 보고, 옆방·윗집 생활 소리가 들리는지 조용할 때 들어 보기",
+    "곰팡이": "벽 모서리·창틀·옷장 뒤·욕실 천장에 곰팡이나 얼룩이 있는지 보기",
+    "결로·습기": "창틀 물기·벽지 들뜸·눅눅한 냄새가 있는지 보기",
+    "채광": "낮에 방문해 창 방향과 앞 건물까지 거리, 해가 드는 시간 보기",
+    "수압": "샤워기와 세면대를 동시에 틀어 수압과 온수 나오는 시간 보기",
+    "배수": "싱크대·세면대·욕실 바닥 물이 잘 빠지는지 보기",
+    "벌레": "싱크대 아래·하수구·창틀 틈에 벌레 흔적이 있는지 보기",
+    "외풍·단열": "창문을 닫고 틈새 바람, 이중창·실리콘 상태 보기",
+    "냄새": "하수구·담배·음식 냄새가 올라오는지 보기",
+    "옵션 상태": "에어컨·세탁기·냉장고를 직접 켜서 작동하는지 보기",
+}
+# 이 말이 조건 이름에 들어가면 데이터 조건으로 만들지 않는다 (LLM 이 대리 지표로 추정하지 못하게 서버에서 막는다)
+ONSITE_ONLY_WORDS = ("방음", "벽간", "층간", "곰팡이", "결로", "습기", "채광", "햇빛", "일조", "수압", "배수",
+                     "벌레", "바퀴", "외풍", "단열", "냄새")
 AmenityMetric = Literal["nearest_m", "count_500m"]
 
 # 예전 이름 (호환)
@@ -251,10 +252,11 @@ class Condition(BaseModel):
     amenity: str | None = None
     metric: AmenityMetric | None = None
     exclude_if: ExcludeIf
-    note: str = Field(default="", description="간접 확인일 때 그 사실 (예: 방음을 건물 구조로 간접 확인)")
 
     @model_validator(mode="after")
     def _fields_for_tool(self) -> "Condition":
+        if any(w in self.label for w in ONSITE_ONLY_WORDS):
+            raise ValueError(f"'{self.label}'은 매물에서 직접 확인할 것이라 데이터 조건으로 만들지 않습니다 (onsite_checks 로).")
         op = self.exclude_if.op
         if self.tool in ("nearby_count", "nearest_distance"):
             if not (self.keywords or self.category):
@@ -306,7 +308,7 @@ class Condition(BaseModel):
             "nearby_count": "카카오 장소 검색", "nearest_distance": "카카오 장소 검색", "listing_field": "매물 정보",
             "building_field": "건축물대장", "amenity": "공공데이터 주변 시설",
         }[self.tool]
-        return f"{text} ({source}{', ' + self.note if self.note else ''})"
+        return f"{text} ({source})"
 
     def _name_unit(self) -> tuple[str, str]:
         if self.tool in ("listing_field", "building_field"):
@@ -326,23 +328,113 @@ class ExclusionPlan(BaseModel):
     source_text: str = ""
     conditions: list[Condition] = Field(default_factory=list)
     unsupported: list[str] = Field(default_factory=list, description="도구로 확인할 수 없는 기호 (추측해서 빼지 않는다)")
-    onsite_checks: list[str] = Field(default_factory=list, description="데이터로는 못 보고 집 보러 가서 확인할 것")
+    onsite_checks: list[str] = Field(
+        default_factory=list, description="매물에서 직접 확인할 것 (ONSITE_CHECKS 의 키). 데이터로 추정하지 않는다")
     confirm_message: str = ""
 
-    def confirm_text(self) -> str:
-        """확인 질문 문장. 조건 문장은 Condition.describe() (서버가 만든 것)만 쓴다."""
+    @model_validator(mode="after")
+    def _known_onsite(self) -> "ExclusionPlan":
+        bad = [k for k in self.onsite_checks if k not in ONSITE_CHECKS]
+        if bad:
+            raise ValueError(f"onsite_checks 는 {', '.join(ONSITE_CHECKS)} 중에서 고릅니다 (받은 값: {', '.join(bad)}).")
+        return self
+
+    def onsite_lines(self) -> list[str]:
+        return [f"{k}: {ONSITE_CHECKS[k]}" for k in self.onsite_checks]
+
+    def confirm_text(self, preview: "Preview | None" = None) -> str:
+        """확인 질문 문장. 조건 문장은 Condition.describe() (서버가 만든 것)만 쓴다.
+
+        preview 를 주면 조건마다 빠지는 매물 수와 남는 매물 수를 붙인다. 남는 매물이 0개면 주의를 준다.
+        """
         src = self.source_text
         head = f"'{src}'{josa(src, '을', '를')} 이렇게 확인할게요." if src else "이렇게 확인할게요."
-        lines = [head, *[f"{i}. {c.describe()}" for i, c in enumerate(self.conditions, 1)]]
+        lines = [head]
+        for i, c in enumerate(self.conditions, 1):
+            extra = ""
+            if preview is not None and c.label in preview.by_condition:
+                extra = f" → {preview.by_condition[c.label]}개 빠짐"
+            elif preview is not None and c.uses_places:
+                extra = " → 적용 후 계산 (실시간 검색)"
+            lines.append(f"{i}. {c.describe()}{extra}")
+        if preview is not None and self.conditions:
+            lines.append(f"→ 지금 조건에서 {preview.before}개 중 {preview.excluded}개가 빠지고 {preview.remaining}개가 남아요.")
+            if preview.unknown:
+                lines.append(f"  (정보가 없어 확인 못 한 {preview.unknown}개는 빼지 않아요.)")
+            if preview.remaining == 0:
+                lines.append("⚠️ 이 조건이면 남는 매물이 없어요. 조건을 하나 빼거나 기준을 낮추는 걸 추천해요.")
         for u in self.unsupported:
             lines.append(f"- '{u}'{josa(u, '은', '는')} 지금 데이터로 확인할 수 없어 매물을 빼지 않아요.")
         if self.onsite_checks:
-            lines.append("- 집 보러 가면 확인해 보세요: " + ", ".join(self.onsite_checks))
+            lines.append("- 집 보러 가면 확인해 보세요:")
+            lines += [f"  · {x}" for x in self.onsite_lines()]
         lines.append("이렇게 할까요? (네 / 아니요)" if self.conditions else "빼는 매물은 없어요.")
         return "\n".join(lines)
 
 
-def tool_catalog() -> dict[str, Any]:
+@dataclass
+class Preview:
+    """승인 전 미리보기: 계획을 매물 목록에 적용하면 몇 개가 빠지는지 (카카오 조건은 세지 않는다)."""
+
+    before: int
+    excluded: int
+    remaining: int
+    unknown: int
+    by_condition: dict[str, int]
+
+
+def preview_plan(plan: ExclusionPlan, props: Iterable[Property], cfg: ScoringConfig = CONFIG,
+                 existing: Iterable[ExclusionPlan] = ()) -> Preview:
+    """이미 승인된 제외 조건(existing)으로 걸러진 뒤의 매물에 새 계획을 적용해 본다. 외부 호출 없음."""
+    base = ExclusionRunner(list(existing), None, cfg, cache={})
+    pool = [p for p in props if base.check(p) is None]
+    local = ExclusionPlan(conditions=[c for c in plan.conditions if not c.uses_places])
+    runner = ExclusionRunner([local], None, cfg, cache={})
+    by: dict[str, int] = {c.label: 0 for c in local.conditions}
+    excluded = 0
+    for p in pool:
+        hit = runner.check(p)
+        if hit:
+            excluded += 1
+            by[hit[0]] += 1
+    unknown = len(set().union(*runner.field_missing.values())) if runner.field_missing else 0
+    return Preview(before=len(pool), excluded=excluded, remaining=len(pool) - excluded, unknown=unknown, by_condition=by)
+
+
+# 자주 나오는 말 → 기본 조건 (LLM 프롬프트 예시. 사용자가 숫자를 말하면 그 숫자를 쓴다)
+DEFAULT_RULES: list[dict[str, Any]] = [
+    {"say": "밤에 시끄러운 곳 싫어 / 조용한 곳", "tool": "amenity", "amenity": "bar", "metric": "nearest_m",
+     "exclude_if": {"op": "<=", "value": 30},
+     "why": "붐비는 술집 앞 소음(1m 약 78dB)이 창문 연 침실 기준 45dB 로 줄어드는 거리 약 45m, 건물에 가리면 약 14m → 30m"},
+    {"say": "아주 조용해야 해", "tool": "amenity", "amenity": "bar", "metric": "nearest_m",
+     "exclude_if": {"op": "<=", "value": 50}, "why": "가림 없이 창문 열어도 45dB 이하가 되는 거리"},
+    {"say": "반지하·옥탑 싫어", "tool": "listing_field", "field": "floor_kind",
+     "exclude_if": {"op": "in", "value": ["반지하", "지하", "옥탑"]}},
+    {"say": "엘리베이터 없는 고층 싫어", "tool": "listing_field", "field": "stairs_floor", "exclude_if": {"op": ">=", "value": 4}},
+    {"say": "근생 원룸 싫어 / 전입신고 되는 집", "tool": "building_field", "field": "main_use",
+     "exclude_if": {"op": "in", "value": ["근린생활시설"]}},
+]
+
+RULES = [
+    "매물을 직접 판단하지 않는다. 어떤 도구로 무엇을 확인할지만 정한다.",
+    "'~가 좋겠어/있었으면'은 반대 조건을 제외로 바꾼다 (예: 편의점 가까웠으면 → 가장 가까운 편의점이 기준보다 멀면 제외).",
+    "방음·곰팡이·결로·채광·수압·배수·벌레·외풍·냄새처럼 매물에서 직접 봐야 하는 것은 데이터 조건으로 추정하지 않고 onsite_checks 로 보낸다.",
+    "예산·보증금·면적·통학 시간처럼 조건 입력으로 표현되는 말은 제외 조건이 아니라 조건 변경이다.",
+    "계약·등기·집주인 관련은 서비스 범위 밖이다.",
+    "amenity 에 있는 시설은 amenity 를 쓰고, 없는 장소만 카카오(nearby_count·nearest_distance)를 쓴다.",
+]
+
+
+def available_amenities(props: Iterable[Property] | None) -> dict[str, str]:
+    """데이터 칸이 실제로 있는 시설만 (props 를 안 주면 전부)."""
+    if props is None:
+        return dict(AMENITIES)
+    props = list(props)
+    return {k: v for k, v in AMENITIES.items()
+            if any(getattr(p, f"count_500m_{k}", None) is not None for p in props)}
+
+
+def tool_catalog(props: Iterable[Property] | None = None) -> dict[str, Any]:
     """확인 계획을 만드는 LLM 에 줄 도구 목록 (프롬프트·명세용). 코드의 칸 정의에서 만든다."""
 
     def fields(d: dict[str, FieldSpec]) -> list[dict[str, Any]]:
@@ -350,19 +442,22 @@ def tool_catalog() -> dict[str, Any]:
                  **({"choices": list(v.choices)} if v.choices else {})} for k, v in d.items()]
 
     return {
+        "rules": RULES,
         "ops": {"num": list(NUM_OPS), "cat": ["in", "not_in"]},
         "tools": {
             "listing_field": {"desc": "매물 정보 칸", "fields": fields(LISTING_FIELDS)},
             "building_field": {"desc": "건축물대장 (주소로 건물이 정확히 찾아진 매물만)", "fields": fields(BUILDING_FIELDS)},
             "amenity": {
-                "desc": "미리 계산한 주변 시설. nearest_m = 가장 가까운 곳까지 m, count_500m = 500m 안 개수. "
+                "desc": "미리 계산한 주변 시설(공공데이터). nearest_m = 가장 가까운 곳까지 m, count_500m = 500m 안 개수. "
                         "500m 안에 없으면 거리는 '500m 넘음'으로 본다",
-                "amenities": AMENITIES,
+                "amenities": available_amenities(props),
                 "metrics": ["nearest_m", "count_500m"],
             },
             "nearby_count": {"desc": "카카오 장소 검색(실시간): 반경 radius_m 안 keywords 장소 수. amenity 에 없는 장소에만 쓴다"},
             "nearest_distance": {"desc": "카카오 장소 검색(실시간): 가장 가까운 keywords 장소까지 m. amenity 에 없는 장소에만 쓴다"},
         },
+        "onsite_checks": ONSITE_CHECKS,
+        "defaults": DEFAULT_RULES,
     }
 
 
@@ -563,7 +658,7 @@ class ExclusionRunner:
             for item in plan.unsupported:
                 out.append(f"'{item}'{josa(item, '은', '는')} 아직 확인할 수 없어요. 이 조건으로는 매물을 빼지 않았습니다.")
             if plan.onsite_checks:
-                out.append("집 보러 가면 확인해 보세요: " + ", ".join(plan.onsite_checks))
+                out.append("집 보러 가면 확인해 보세요 — " + " / ".join(plan.onsite_lines()))
         if self.place_labels_skipped_no_key:
             out.append(
                 f"카카오 키가 없어 장소 조건({', '.join(dict.fromkeys(self.place_labels_skipped_no_key))})을 확인하지 못했습니다."

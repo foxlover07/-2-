@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.data import _parse_row
-from app.exclusions import Condition, ExclusionPlan, ExclusionRunner, tool_catalog
+from app.exclusions import Condition, ExclusionPlan, ExclusionRunner, preview_plan, tool_catalog
 from app.models import Property
 from app.scoring_config import CONFIG
 
@@ -84,13 +84,23 @@ def test_building_age_uses_reference_year_and_matched_only():
     assert r.field_missing == {"10년 넘은 건물": {"P1"}}
 
 
-def test_main_use_and_structure_groups():
+def test_main_use_groups_and_no_structure_proxy():
     use = runner(cond("building_field", "근생 원룸", "in", ["근린생활시설"], field="main_use"))
     assert use.check(prop(bld_main_purpose="제2종근린생활시설"))[1] == "건물 용도: 근린생활시설"
     assert use.check(prop(bld_main_purpose="단독주택")) is None
-    noise = runner(cond("building_field", "방음", "in", ["조적(벽돌·블록)", "목조"], field="structure", note="방음을 건물 구조로 간접 확인"))
-    assert noise.check(prop(bld_structure="벽돌구조")) is not None
-    assert noise.check(prop(bld_structure="철근콘크리트구조")) is None
+    # 방음을 건물 구조로 추정하는 칸은 두지 않는다 (11/15 결정)
+    with pytest.raises(ValidationError):
+        Condition(**cond("building_field", "벽돌", "in", ["조적(벽돌·블록)"], field="structure"))
+
+
+def test_onsite_only_topics_cannot_become_data_conditions():
+    for label in ("방음 안 좋은 집", "곰팡이", "채광", "수압 약함", "벌레"):
+        with pytest.raises(ValidationError):
+            Condition(**cond("building_field", label, ">", 10, field="building_age_years"))
+    # 외부 소음(술집)은 데이터로 확인하는 조건이라 허용
+    Condition(**cond("amenity", "밤 소음(술집)", "<=", 30, amenity="bar", metric="nearest_m"))
+    with pytest.raises(ValidationError):
+        ExclusionPlan(onsite_checks=["창문 이중창"])  # 정해진 항목만
 
 
 # ---------------------------------------------------------------- 주변 시설 (미리 계산)
@@ -126,7 +136,7 @@ def test_amenity_count():
     cond("listing_field", "x", "in", ["2층"], field="floor_kind"),          # 없는 값
     cond("listing_field", "x", "in", ["a"], field="floor_number"),          # 숫자 칸에 in
     cond("building_field", "x", ">", 1, field="area_m2"),                   # 다른 도구 칸
-    cond("amenity", "x", ">", 1, amenity="gym", metric="nearest_m"),        # 없는 시설
+    cond("amenity", "x", ">", 1, amenity="cafe", metric="nearest_m"),       # 없는 시설
     cond("amenity", "x", ">", 1, amenity="bar"),                            # metric 없음
     cond("amenity", "x", "in", ["a"], amenity="bar", metric="nearest_m"),   # 시설에 in
     cond("nearby_count", "x", "in", ["a"], keywords=["헬스장"], radius_m=300),
@@ -140,26 +150,40 @@ def test_confirm_text_is_built_from_conditions():
     plan = ExclusionPlan(
         source_text="밤에 시끄럽고 오래된 집 싫어",
         conditions=[
-            Condition(**cond("amenity", "술집", "<=", 50, amenity="bar", metric="nearest_m")),
-            Condition(**cond("building_field", "방음", "in", ["조적(벽돌·블록)"], field="structure", note="방음을 건물 구조로 간접 확인")),
+            Condition(**cond("amenity", "술집", "<=", 30, amenity="bar", metric="nearest_m")),
             Condition(**cond("building_field", "오래된 건물", ">", 15, field="building_age_years")),
         ],
         unsupported=["큰 도로 소음"],
-        onsite_checks=["창문 이중창 여부", "옆방 소리"],
+        onsite_checks=["방음"],
     )
     text = plan.confirm_text()
-    assert "1. 가장 가까운 술집까지 거리 50m 이하인 매물 제외 (공공데이터 주변 시설)" in text
-    assert "2. 건물 구조가 조적(벽돌·블록)인 매물 제외 (건축물대장, 방음을 건물 구조로 간접 확인)" in text
-    assert "3. 건물 연식 15년 초과인 매물 제외 (건축물대장)" in text
     assert text.startswith("'밤에 시끄럽고 오래된 집 싫어'를 이렇게")
+    assert "1. 가장 가까운 술집까지 거리 30m 이하인 매물 제외 (공공데이터 주변 시설)" in text
+    assert "2. 건물 연식 15년 초과인 매물 제외 (건축물대장)" in text
     assert "'큰 도로 소음'은 지금 데이터로 확인할 수 없어" in text
-    assert "창문 이중창 여부, 옆방 소리" in text and text.endswith("(네 / 아니요)")
+    assert "방음: 벽을 두드려 보고" in text and text.endswith("(네 / 아니요)")
 
 
-def test_onsite_checks_go_to_notes_and_plan_is_active():
-    r = ExclusionRunner([ExclusionPlan(source_text="수압 약하면 싫어", onsite_checks=["샤워기·세면대 동시에 틀어 보기"])], None, CFG)
-    assert r.active and r.check(prop()) is None
-    assert any("샤워기" in n for n in r.notes())
+def test_preview_counts_and_zero_warning():
+    props = [prop("A", nearest_m_bar=10, bld_use_approval_year=2000), prop("B", nearest_m_bar=80, bld_use_approval_year=2000),
+             prop("C", nearest_m_bar=90, bld_use_approval_year=2022), prop("D", bld_use_approval_year=2022)]
+    noise = ExclusionPlan(source_text="시끄러운 곳 싫어", conditions=[Condition(**cond("amenity", "술집", "<=", 30, amenity="bar", metric="nearest_m"))])
+    pv = preview_plan(noise, props, CFG)
+    assert (pv.before, pv.excluded, pv.remaining, pv.unknown, pv.by_condition) == (4, 1, 3, 1, {"술집": 1})
+    assert "→ 1개 빠짐" in noise.confirm_text(pv) and "4개 중 1개가 빠지고 3개가 남아요" in noise.confirm_text(pv)
+
+    # 이미 승인된 조건(오래된 건물)으로 A·B 가 빠진 뒤의 매물에 적용한다
+    old = ExclusionPlan(conditions=[Condition(**cond("building_field", "오래된", ">", 15, field="building_age_years"))])
+    pv2 = preview_plan(noise, props, CFG, existing=[old])
+    assert (pv2.before, pv2.excluded, pv2.remaining) == (2, 0, 2)
+
+    everything = ExclusionPlan(conditions=[Condition(**cond("listing_field", "모두", ">", 0, field="area_m2"))])
+    pv3 = preview_plan(everything, props, CFG)
+    assert pv3.remaining == 0 and "남는 매물이 없어요" in everything.confirm_text(pv3)
+
+    kakao = ExclusionPlan(conditions=[Condition(tool="nearby_count", label="헬스장", keywords=["헬스장"], radius_m=300,
+                                                exclude_if={"op": "<", "value": 1})])
+    assert "적용 후 계산" in kakao.confirm_text(preview_plan(kakao, props, CFG))
 
 
 def test_tool_catalog_lists_fields_from_code():
@@ -168,8 +192,12 @@ def test_tool_catalog_lists_fields_from_code():
     assert {"floor_kind", "stairs_floor", "room_type", "monthly_cost_manwon"} <= listing
     floor_kind = next(f for f in cat["tools"]["listing_field"]["fields"] if f["field"] == "floor_kind")
     assert "반지하" in floor_kind["choices"]
-    assert set(cat["tools"]["amenity"]["amenities"]) == {
-        "convenience", "supermarket", "laundry", "laundromat", "pharmacy", "clinic", "bar", "karaoke"}
+    assert {"gym", "park", "subway", "bus_stop"} <= set(cat["tools"]["amenity"]["amenities"])
+    assert "structure" not in {f["field"] for f in cat["tools"]["building_field"]["fields"]}
+    assert "수압" in cat["onsite_checks"] and cat["defaults"] and cat["rules"]
+    # 매물 목록을 주면 데이터 칸이 있는 시설만 보여 준다
+    only = tool_catalog([prop(count_500m_bar=3, count_500m_convenience=10)])
+    assert set(only["tools"]["amenity"]["amenities"]) == {"bar", "convenience"}
 
 
 # ---------------------------------------------------------------- 통합 CSV 한 줄 읽기

@@ -41,6 +41,14 @@ export interface Property {
   count_500m_clinic?: number | null
   count_500m_bar?: number | null
   count_500m_karaoke?: number | null
+  nearest_m_gym?: number | null
+  nearest_m_park?: number | null
+  nearest_m_subway?: number | null
+  nearest_m_bus_stop?: number | null
+  count_500m_gym?: number | null
+  count_500m_park?: number | null
+  count_500m_subway?: number | null
+  count_500m_bus_stop?: number | null
   bld_status?: string | null
   bld_main_purpose?: string | null
   bld_use_approval_year?: number | null

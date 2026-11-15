@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 
-AMENITY_KEYS = ("convenience", "supermarket", "laundry", "laundromat", "pharmacy", "clinic", "bar", "karaoke")
+AMENITY_KEYS = ("convenience", "supermarket", "laundry", "laundromat", "pharmacy", "clinic", "bar", "karaoke",
+                "gym", "park", "subway", "bus_stop")
 
 
 class Property(BaseModel):
@@ -54,6 +55,15 @@ class Property(BaseModel):
     count_500m_clinic: float | None = None
     count_500m_bar: float | None = None
     count_500m_karaoke: float | None = None
+    # 추가 예정 칸 (공공데이터): 헬스장·공원·지하철역·버스정류장
+    nearest_m_gym: float | None = None
+    nearest_m_park: float | None = None
+    nearest_m_subway: float | None = None
+    nearest_m_bus_stop: float | None = None
+    count_500m_gym: float | None = None
+    count_500m_park: float | None = None
+    count_500m_subway: float | None = None
+    count_500m_bus_stop: float | None = None
 
     # ---- 선택 칸: 건축물대장 표제부 (bld_status 가 matched 일 때만 믿는다)
     bld_status: str | None = None
