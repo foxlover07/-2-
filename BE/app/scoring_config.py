@@ -51,6 +51,8 @@ class ScoringConfig:
     # ---- 5장 챗봇 제외 조건 (확인 도구). ⚠️ 챗봇은 미완성 — 아래는 도구 실행용 초기값
     kakao_call_limit: int = 500             # 추천 한 번에 카카오 호출 상한
     nearest_search_radius_m: int = 1000     # nearest_distance 가 찾는 최대 반경 (이 안에 없으면 '없음')
+    amenity_known_radius_m: int = 500       # 미리 계산한 주변 시설 칸의 반경 (거리가 비면 이 안에 없음)
+    reference_year: int | None = None       # 건물 연식 기준 연도 (None 이면 올해)
     kakao_max_pages: int = 3                # nearby_count 키워드 하나당 최대 페이지 (카카오는 최대 45개까지 준다)
     kakao_page_size: int = 15
 
