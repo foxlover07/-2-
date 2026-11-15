@@ -7,6 +7,8 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.162.0",
     "httpx>=0.28.1",
+    "langchain-google-genai>=4.4.3",
+    "langgraph>=1.2.20",
     "openai>=3.46.0",
     "python-dotenv>=1.2.4",
     "uvicorn>=0.54.0",
@@ -16,6 +18,12 @@ dependencies = [
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.2.0",
+]
+# 시간표 캡처 OCR (POST /timetable/ocr). 선택 설치: torch 포함 1GB 이상이라 Render 무료 서버에는 넣지 않는다.
+# 설치: uv sync --group ocr  (없으면 API 가 status=ocr_unavailable 로 답한다)
+ocr = [
+    "easyocr>=1.7.2",
+    "opencv-python-headless>=5.0.0",
 ]
 
 [tool.uv]

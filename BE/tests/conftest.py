@@ -11,6 +11,8 @@ from app.data import DEFAULT_CSV_PATH, load_properties, load_walk_table
 
 os.environ["DATA_CSV_PATH"] = str(DEFAULT_CSV_PATH)
 os.environ["WALK_TABLE_PATH"] = ""  # 빈 값 = 도보시간 표 없음 (spot1~4 만)
+os.environ["AGENT_TRACE_PATH"] = ""  # 테스트에서 에이전트 턴 기록 파일을 쓰지 않는다
+os.environ["AGENT_LLM_EXPLAIN"] = "on"  # 로컬 .env.local 의 설정과 상관없이 설명 경로를 테스트한다
 
 
 @pytest.fixture(autouse=True)

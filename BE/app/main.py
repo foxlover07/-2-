@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import properties, recommend
+from app.routers import agent, analysis, market, properties, recommend, timetable
 
 load_dotenv()
 
@@ -27,6 +27,10 @@ app.add_middleware(
 
 app.include_router(properties.router)
 app.include_router(recommend.router)
+app.include_router(analysis.router)
+app.include_router(market.router)
+app.include_router(agent.router)
+app.include_router(timetable.router)
 
 
 @app.get("/health")
