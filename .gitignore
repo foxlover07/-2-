@@ -49,3 +49,21 @@ DB/experimental/
 
 # 디자인 시안 등 압축 파일 (로컬 보관)
 *.zip
+
+# 평가·분석 결과 (로컬 수집 매물 ID 포함, 커밋 금지)
+BE/eval/results/
+
+# Syntitan 업로드용 내보내기 (수집 데이터 포함, 커밋 금지)
+DB/export/
+
+# 에이전트 턴 기록 (사용자 메시지가 들어 있어 커밋하지 않는다)
+BE/logs/
+
+# 사용자 시간표 캡처 (교수명 등 개인 정보 포함, 로컬 테스트용)
+BE/tests/fixtures/*.png
+
+# 저장소 루트의 이미지 (개인 캡처·시안 등 로컬 보관. 앱 이미지는 FE/public 에 둔다)
+/*.png
+
+# Claude Code 개인 설정 (커밋 안 함)
+.claude/settings.local.json

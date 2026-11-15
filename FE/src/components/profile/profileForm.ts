@@ -130,7 +130,7 @@ export function checkForm(form: FormState, deptBuildings: string[], ttBuildings:
 }
 
 // 검증을 통과한 폼 → 저장값. savedAt 은 저장할 때 채운다.
-export function toProfile(form: FormState, check: FormCheck): Omit<Profile, 'savedAt'> {
+export function toProfile(form: FormState, check: FormCheck): Omit<Profile, 'savedAt' | 'exclusions'> {
   const timetable: ClassSlot[] = form.timetable.map(({ day, start, end, building }) => ({ day, start, end, building }))
   const places: FrequentPlace[] = form.places.map(({ area, visitsPerWeek }) => ({ area, visitsPerWeek }))
   return {

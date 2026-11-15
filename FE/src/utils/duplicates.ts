@@ -22,4 +22,19 @@ export function duplicateCounts(list: Property[]): Map<string, number> {
   return out
 }
 
+/** 매물 ID → 묶음 키 (2개 이상인 묶음만). 추천 목록에서 같은 집일 수 있는 광고를 한 줄로 묶을 때 쓴다. */
+export function duplicateGroups(list: Property[]): Map<string, string> {
+  const groups = new Map<string, string[]>()
+  for (const p of list) {
+    const k = key(p)
+    if (k === null) continue
+    groups.set(k, [...(groups.get(k) ?? []), p.property_id])
+  }
+  const out = new Map<string, string>()
+  for (const [k, ids] of groups) {
+    if (ids.length > 1) for (const id of ids) out.set(id, k)
+  }
+  return out
+}
+
 export const DUPLICATE_HINT = '주소·보증금·월세·관리비·면적이 같은 매물이 더 있습니다. 같은 집의 중복 광고이거나 같은 건물의 다른 호실일 수 있습니다.'

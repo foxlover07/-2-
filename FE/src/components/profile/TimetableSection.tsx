@@ -1,8 +1,9 @@
-import { CalendarDays, Plus, Trash2, Upload } from 'lucide-react'
+import { CalendarDays, Plus, Trash2 } from 'lucide-react'
 import { DAYS, type Day } from '../../constants/recommend'
 import { cx } from '../../utils/cx'
-import { Badge, Button, Select } from '../common'
+import { Button, Select } from '../common'
 import { SectionCard } from './SectionCard'
+import { TimetableImageImport } from './TimetableImageImport'
 import { TIME_INPUT, newRowId, type TimetableRow } from './profileForm'
 
 interface TimetableSectionProps {
@@ -13,9 +14,18 @@ interface TimetableSectionProps {
   buildings: string[]
   // 건물별 안내 (예: 일부 매물만 도보시간이 있는 건물)
   buildingNotes?: Record<string, string>
+  university?: string // 사진 입력에서 건물 이름을 맞출 대학
 }
 
-export function TimetableSection({ step, rows, onRowsChange, rowErrors, buildings, buildingNotes = {} }: TimetableSectionProps) {
+export function TimetableSection({
+  step,
+  rows,
+  onRowsChange,
+  rowErrors,
+  buildings,
+  buildingNotes = {},
+  university,
+}: TimetableSectionProps) {
   const update = (id: number, patch: Partial<TimetableRow>) =>
     onRowsChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   const remove = (id: number) => onRowsChange(rows.filter((r) => r.id !== id))
@@ -31,21 +41,8 @@ export function TimetableSection({ step, rows, onRowsChange, rowErrors, building
       title="시간표"
       description="선택 · 요일마다 첫 수업 건물과 마지막 수업 건물까지 편도 시간을 이동 시간에 더합니다 (이동 시간의 20%)"
     >
-      {/* 캡처 불러오기: Vision LLM 연결 전이라 자리만 둔다 */}
-      <div
-        className="flex items-center gap-3 rounded-control border border-dashed border-border bg-bg/50 px-4 py-3 text-muted"
-        aria-disabled
-      >
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-control border border-border bg-white">
-          <Upload className="size-4" aria-hidden />
-        </span>
-        <div className="min-w-0">
-          <p className="flex items-center gap-2 text-sm font-medium text-text">
-            시간표 캡처로 불러오기 <Badge>준비 중</Badge>
-          </p>
-          <p className="text-xs">캡처를 올리면 자동 인식 후, 확인 단계를 거쳐 아래 표에 채워집니다.</p>
-        </div>
-      </div>
+      {/* 캡처 불러오기: 사진을 읽고(OCR) → 확인·수정 → 표에 추가 */}
+      {university && <TimetableImageImport university={university} onAdd={(added) => onRowsChange([...rows, ...added])} />}
 
       {/* relative: 표 안의 sr-only(absolute) 요소가 스크롤 영역 밖으로 나가 모바일에서 페이지가 가로로 넓어지지 않게 */}
       <div className="relative mt-4 overflow-x-auto rounded-control border border-border">

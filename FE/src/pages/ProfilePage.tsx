@@ -91,7 +91,8 @@ export function ProfilePage() {
 
   const handleSave = () => {
     if (!check.canSave) return
-    const next = { ...toProfile(form, check), savedAt: new Date().toISOString() }
+    // 장소 조건(챗봇에서 승인)은 폼에 없으므로 저장된 값을 그대로 둔다
+    const next = { ...toProfile(form, check), exclusions: profile.exclusions, savedAt: new Date().toISOString() }
     saveProfile(next)
     setForm(toForm(next))
     setJustSaved(true)
@@ -145,6 +146,7 @@ export function ProfilePage() {
           rowErrors={check.rowErrors}
           buildings={ttBuildings}
           buildingNotes={ttNotes}
+          university={university}
         />
 
         <PlacesSection step={6} rows={form.places} onRowsChange={(places) => patch({ places })} />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { Check, CircleAlert, Lightbulb, Plus, Sparkles, TriangleAlert, UserRound } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, Lightbulb, MapPinOff, Plus, Sparkles, TriangleAlert, UserRound, X } from 'lucide-react'
 import {
   DISPLAYED_TOP_N,
   LARGER_AREA_OPTIONS,
@@ -10,18 +10,22 @@ import {
 } from '../../constants/recommend'
 import { getUniversityLabel } from '../../constants/universities'
 import { useCompare } from '../../contexts/CompareContext'
+import { useProfile } from '../../contexts/ProfileContext'
 import { useUniversity } from '../../contexts/UniversityContext'
 import { API_URL, ApiError } from '../../services/api'
 import { recommend, toRecommendRequest } from '../../services/recommendService'
 import type { Property } from '../../types/property'
 import type { ExcludedStage, NotRecommended, RankedProperty, RecommendResult } from '../../types/recommend'
 import { cx } from '../../utils/cx'
-import { DUPLICATE_HINT, duplicateCounts } from '../../utils/duplicates'
+import { DUPLICATE_HINT, duplicateCounts, duplicateGroups } from '../../utils/duplicates'
 import { formatArea, formatManwon } from '../../utils/format'
 import { missingForRecommend, type Profile } from '../../utils/profile'
+import { vsText } from '../../utils/vsTarget'
 import { Badge, Card, EmptyState, Loading } from '../common'
 
-const PAGE = 20
+// 처음에는 상위 몇 개만 보여 주고, '더 보기'를 누를 때마다 MORE 개씩 늘린다 (분석 카드가 너무 아래로 밀리지 않게)
+const FIRST = 5
+const MORE = 10
 
 const LINK_BUTTON =
   'inline-flex h-10 items-center gap-1.5 rounded-control bg-blue px-4 text-sm font-medium text-white hover:bg-blue/90'
@@ -29,7 +33,6 @@ const LINK_SECONDARY =
   'inline-flex h-8 items-center rounded-control border border-border bg-white px-3 text-sm font-medium text-text hover:bg-bg'
 
 const pct = (w: number) => `${Math.round(w * 100)}%`
-const num = (v: number) => Math.abs(v).toLocaleString('ko-KR', { maximumFractionDigits: 1 })
 
 const STAGE_LABELS: Record<ExcludedStage, string> = {
   budget: '유지비 상한 초과',
@@ -120,7 +123,7 @@ export function RecommendPanel({ profile, isSaved, properties }: RecommendPanelP
 
 function ResultView({ result, profile, byId }: { result: RecommendResult; profile: Profile; byId: Map<string, Property> }) {
   const [sort, setSort] = useState<SortMode>('ai')
-  const [limit, setLimit] = useState(PAGE)
+  const [limit, setLimit] = useState(FIRST)
   const rows = useMemo(() => {
     if (sort === 'ai') return result.ranked
     return [...result.ranked].sort(
@@ -128,6 +131,37 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
         a.monthly_cost_manwon - b.monthly_cost_manwon || (a.deposit_manwon ?? 0) - (b.deposit_manwon ?? 0) || a.rank - b.rank,
     )
   }, [result.ranked, sort])
+  // 같은 집일 수 있는 광고(주소·보증금·월세·관리비·면적이 같음)는 지금 정렬에서 가장 앞선 것 하나만 보이고 나머지는 펼친다.
+  // 순위·점수는 엔진 결과 그대로 (화면에서 묶기만 한다).
+  const groupOf = useMemo(
+    () => duplicateGroups(result.ranked.flatMap((r) => byId.get(r.property_id) ?? [])),
+    [result.ranked, byId],
+  )
+  const entries = useMemo(() => {
+    const byGroup = new Map<string, RankedProperty[]>()
+    const out: Array<{ rep: RankedProperty; group: string | null; others: RankedProperty[] }> = []
+    for (const r of rows) {
+      const g = groupOf.get(r.property_id) ?? null
+      if (g === null) {
+        out.push({ rep: r, group: null, others: [] })
+      } else if (byGroup.has(g)) {
+        byGroup.get(g)!.push(r)
+      } else {
+        const others: RankedProperty[] = []
+        byGroup.set(g, others)
+        out.push({ rep: r, group: g, others })
+      }
+    }
+    return out
+  }, [rows, groupOf])
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
+  const toggleGroup = (g: string) =>
+    setOpenGroups((s) => {
+      const next = new Set(s)
+      if (next.has(g)) next.delete(g)
+      else next.add(g)
+      return next
+    })
   const dupes = useMemo(
     () => duplicateCounts(result.ranked.flatMap((r) => byId.get(r.property_id) ?? [])),
     [result.ranked, byId],
@@ -156,6 +190,7 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
             조건·순위 바꾸기
           </Link>
         </div>
+        <PlaceConditions profile={profile} counts={result.exclusion_counts} />
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-bold text-navy">우선순위</span>
           {result.priorities.map((k, i) => (
@@ -213,21 +248,59 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
         <EmptyState icon={CircleAlert} title="조건에 맞는 매물이 없습니다" description="유지비·보증금 상한을 바꿔 보세요." />
       ) : (
         <ol className="flex flex-col gap-2.5">
-          {rows.slice(0, limit).map((r) => (
-            <ResultRow
-              key={r.property_id}
-              item={r}
-              priorities={result.priorities}
-              property={byId.get(r.property_id)}
-              duplicateCount={dupes.get(r.property_id) ?? 0}
-            />
-          ))}
+          {entries.slice(0, limit).flatMap(({ rep, group, others }) => {
+            const open = group !== null && openGroups.has(group)
+            return [
+              <ResultRow
+                key={rep.property_id}
+                item={rep}
+                priorities={result.priorities}
+                property={byId.get(rep.property_id)}
+                duplicateCount={dupes.get(rep.property_id) ?? 0}
+                more={others.length > 0 && group !== null ? { count: others.length, open, onToggle: () => toggleGroup(group) } : undefined}
+              />,
+              ...(open
+                ? others.map((o) => (
+                    <ResultRow
+                      key={o.property_id}
+                      item={o}
+                      priorities={result.priorities}
+                      property={byId.get(o.property_id)}
+                      duplicateCount={dupes.get(o.property_id) ?? 0}
+                      nested
+                    />
+                  ))
+                : []),
+            ]
+          })}
         </ol>
       )}
-      {rows.length > limit && (
-        <button type="button" onClick={() => setLimit((n) => n + PAGE)} className="self-center text-sm font-medium text-blue">
-          {rows.length}개 중 {limit}개 표시 · 더 보기
-        </button>
+      {entries.length > FIRST && (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <span className="text-xs text-muted">
+            {entries.length < rows.length
+              ? `매물 ${rows.length}개 (같은 집일 수 있는 광고를 묶으면 ${entries.length}곳) 중 ${Math.min(limit, entries.length)}곳 표시`
+              : `${rows.length}개 중 ${Math.min(limit, rows.length)}개 표시`}
+          </span>
+          {entries.length > limit && (
+            <button
+              type="button"
+              onClick={() => setLimit((n) => n + MORE)}
+              className="inline-flex h-8 items-center rounded-control border border-border bg-white px-3 text-sm font-medium text-blue hover:bg-blue-50"
+            >
+              더 보기 (+{Math.min(MORE, entries.length - limit)}곳)
+            </button>
+          )}
+          {limit > FIRST && (
+            <button
+              type="button"
+              onClick={() => setLimit(FIRST)}
+              className="inline-flex h-8 items-center rounded-control px-3 text-sm font-medium text-muted hover:text-text"
+            >
+              접기
+            </button>
+          )}
+        </div>
       )}
 
       {result.not_recommended.length > 0 && (
@@ -276,38 +349,20 @@ function ResultView({ result, profile, byId }: { result: RecommendResult; profil
   )
 }
 
-// 기준 대비 값 (통합안 3.6: 점수 대신 이 값을 보여 준다)
-function vsText(factor: Factor, item: RankedProperty): { text: string; good: boolean | null } {
-  const v = item.vs_target
-  if (factor === 'travel') {
-    if (v.travel_min === null) return { text: '계산 불가', good: null }
-    if (v.travel_min === 0) return { text: '희망 통학 시간과 같음', good: null }
-    return v.travel_min < 0
-      ? { text: `희망보다 ${num(v.travel_min)}분 가까움`, good: true }
-      : { text: `희망보다 ${num(v.travel_min)}분 멂`, good: false }
-  }
-  if (factor === 'cost') {
-    if (v.cost_manwon === 0) return { text: '예산과 같음', good: null }
-    return v.cost_manwon < 0
-      ? { text: `예산보다 ${num(v.cost_manwon)}만 원 쌈`, good: true }
-      : { text: `예산보다 ${num(v.cost_manwon)}만 원 많음`, good: false }
-  }
-  if (v.area_m2 === 0) return { text: '희망 면적과 같음', good: null }
-  return v.area_m2 > 0
-    ? { text: `희망보다 ${num(v.area_m2)}㎡ 넓음`, good: null }
-    : { text: `희망보다 ${num(v.area_m2)}㎡ 좁음`, good: false }
-}
-
 function ResultRow({
   item,
   priorities,
   property,
   duplicateCount,
+  more,
+  nested = false,
 }: {
   item: RankedProperty
   priorities: Factor[]
   property: Property | undefined
   duplicateCount: number
+  more?: { count: number; open: boolean; onToggle: () => void } // 묶음 대표 행: 같은 집일 수 있는 광고 펼치기
+  nested?: boolean // 펼친 묶음 안의 행
 }) {
   const compare = useCompare()
   const inCompare = compare.has(item.property_id)
@@ -319,6 +374,7 @@ function ResultRow({
         'flex flex-wrap items-center gap-x-4 gap-y-3 rounded-control border px-4 py-3.5',
         top ? 'border-blue bg-blue-50' : 'border-border bg-white',
         item.rank === 1 && 'border-2',
+        nested && 'ml-6 border-dashed',
       )}
     >
       <span
@@ -337,10 +393,23 @@ function ResultRow({
           </Link>
           {property && <Badge tone="blue">{property.property_type}</Badge>}
           {item.over_budget && <Badge tone="amber">예산 초과</Badge>}
-          {duplicateCount > 1 && (
-            <Badge tone="gray" title={DUPLICATE_HINT}>
-              같은 집일 수 있음 · {duplicateCount}건
-            </Badge>
+          {more ? (
+            <button
+              type="button"
+              onClick={more.onToggle}
+              aria-expanded={more.open}
+              title={DUPLICATE_HINT}
+              className="inline-flex items-center gap-0.5 rounded-md bg-bg px-2 py-0.5 text-xs font-medium text-muted hover:text-text"
+            >
+              같은 집일 수 있는 광고 {more.count}건 {more.open ? '접기' : '더'}
+              <ChevronDown className={cx('size-3.5 transition-transform', more.open && 'rotate-180')} aria-hidden />
+            </button>
+          ) : (
+            duplicateCount > 1 && (
+              <Badge tone="gray" title={DUPLICATE_HINT}>
+                같은 집일 수 있음 · {duplicateCount}건
+              </Badge>
+            )
           )}
         </p>
         <p className="mt-0.5 text-xs text-muted">
@@ -400,5 +469,40 @@ function NotRecommendedItem({ item, property }: { item: NotRecommended; property
       </p>
       <p className="mt-1 text-text">{item.message}</p>
     </li>
+  )
+}
+
+// 챗봇에서 승인한 장소 조건 (술집 근처 제외 등). 여기서 해제하면 생활 프로필에서 지우고 다시 추천한다.
+function PlaceConditions({ profile, counts }: { profile: Profile; counts: Record<string, number> }) {
+  const { saveProfile } = useProfile()
+  if (profile.exclusions.length === 0) return null
+  const remove = (name: string) =>
+    saveProfile({ ...profile, exclusions: profile.exclusions.filter((e) => e.source_text !== name) })
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="flex items-center gap-1 font-bold text-navy">
+        <MapPinOff className="size-4" aria-hidden />
+        장소 조건
+      </span>
+      {profile.exclusions.map((e) => (
+        <span
+          key={e.source_text}
+          title={e.confirm_message}
+          className="inline-flex items-center gap-1 rounded-md bg-blue-50 py-0.5 pr-1 pl-2 text-xs font-medium text-blue"
+        >
+          {e.confirm_message || e.source_text}
+          <span className="text-muted">· {counts[e.source_text] ?? 0}개 제외</span>
+          <button
+            type="button"
+            onClick={() => remove(e.source_text)}
+            aria-label={`${e.source_text} 조건 해제`}
+            className="rounded p-0.5 hover:bg-white"
+          >
+            <X className="size-3" aria-hidden />
+          </button>
+        </span>
+      ))}
+      <span className="text-xs text-muted">AI 상담에서 추가 · 상가정보 기준 직선거리</span>
+    </div>
   )
 }

@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { Columns3, Plus, TriangleAlert } from 'lucide-react'
 import { Button, Card, EmptyState, Loading } from '../components/common'
 import { CompareTable } from '../components/compare/CompareTable'
+import { DecisionAnalysis } from '../components/compare/DecisionAnalysis'
 import { RecommendPanel } from '../components/compare/RecommendPanel'
 import { PageContainer } from '../components/layout/PageContainer'
 import { MAX_COMPARE, useCompare } from '../contexts/CompareContext'
@@ -71,6 +72,10 @@ export function ComparePage() {
     >
       <div className="mb-5">
         <RecommendPanel profile={profile} isSaved={isSaved} properties={all} />
+      </div>
+
+      <div className="mb-5">
+        <DecisionAnalysis profile={profile} isSaved={isSaved} properties={all} />
       </div>
 
       {missingCount > 0 && (

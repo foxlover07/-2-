@@ -2,7 +2,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { ArrowLeft, Check, ExternalLink, Plus, SearchX, TriangleAlert } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Loading, PlaceholderImage } from '../components/common'
+import { AmenitiesCard, BuildingCard, MarketCompareCard } from '../components/detail/NearbyCards'
 import { WalkTimeCard } from '../components/detail/WalkTimeCard'
+import { WhyRankCard } from '../components/detail/WhyRankCard'
 import { PageContainer } from '../components/layout/PageContainer'
 import { MAX_COMPARE, useCompare } from '../contexts/CompareContext'
 import { useProfile } from '../contexts/ProfileContext'
@@ -100,7 +102,11 @@ function PropertyDetail({ property: p }: { property: Property }) {
             </dl>
           </Card>
 
+          <WhyRankCard propertyId={p.property_id} />
           <WalkTimeCard property={p} visits={departmentVisits(profile)} />
+          <BuildingCard propertyId={p.property_id} />
+          <MarketCompareCard propertyId={p.property_id} />
+          <AmenitiesCard propertyId={p.property_id} />
         </div>
 
         <div className="flex flex-col gap-5 lg:sticky lg:top-24 lg:self-start">

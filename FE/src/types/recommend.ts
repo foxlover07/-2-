@@ -1,7 +1,7 @@
 // BE app/scoring.py 의 RecommendRequest / RecommendResult 와 1:1 대응 (추천 시스템 통합안).
 import type { Day, Factor, LargerArea } from '../constants/recommend'
 
-// 챗봇 확인 계획 (BE app/exclusions.ExclusionPlan). ⚠️ 챗봇은 미완성 — 지금 화면은 빈 목록을 보낸다.
+// 챗봇에서 승인한 장소 조건 (BE app/exclusions.ExclusionPlan). 생활 프로필에 저장하고 추천 요청에 그대로 보낸다.
 export interface ExclusionPlan {
   source_text: string
   conditions: Array<{

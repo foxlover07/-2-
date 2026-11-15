@@ -28,7 +28,7 @@ export function toRecommendRequest(p: Profile, university: string = DEFAULT_UNIV
     desired_area_m2: p.desiredAreaM2 ?? 0,
     larger_area: p.largerArea,
     timetable: p.timetable,
-    exclusions: [], // 챗봇 확인 계획 (미완성). 승인된 계획이 생기면 여기에 넣는다
+    exclusions: p.exclusions, // 챗봇에서 승인한 장소 조건 (상가정보로 확인)
   }
 }
 

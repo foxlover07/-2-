@@ -10,6 +10,7 @@ import {
   type Factor,
   type LargerArea,
 } from '../constants/recommend'
+import type { ExclusionPlan } from '../types/recommend'
 import type { SpotVisits } from './walk'
 
 export interface ClassSlot {
@@ -38,6 +39,8 @@ export interface Profile {
   largerArea: LargerArea // 더 넓은 면적: 좋음 / 상관없음 / 싫음
   timetable: ClassSlot[]
   places: FrequentPlace[]
+  // 챗봇에서 승인한 장소 조건 (술집 근처 제외 등, BE app/exclusions.ExclusionPlan). 폼에서는 고치지 않고 추천 화면에서 해제한다
+  exclusions: ExclusionPlan[]
   // 마지막 저장 시각 (ISO). 저장한 적이 없으면 null.
   savedAt: string | null
 }
@@ -54,6 +57,7 @@ export const EMPTY_PROFILE: Profile = {
   largerArea: DEFAULT_LARGER_AREA,
   timetable: [],
   places: [],
+  exclusions: [],
   savedAt: null,
 }
 
@@ -91,6 +95,10 @@ function parsePriorities(v: unknown): Factor[] {
   return [...new Set(v.filter(isFactor))].slice(0, 2)
 }
 
+function isExclusionPlan(v: unknown): v is ExclusionPlan {
+  return isObj(v) && typeof v.source_text === 'string' && Array.isArray(v.conditions) && v.conditions.length > 0
+}
+
 /**
  * localStorage 값 → Profile. 예전 형식(v3 카테고리·답변·방문 횟수, v2 교통 편의성)도 읽는다.
  * 없거나 틀린 필드는 기본값을 쓰고, 시간표·장소는 올바른 행만 남긴다. 없어진 필드는 버린다.
@@ -112,6 +120,7 @@ export function parseStoredProfile(value: unknown): Profile | null {
     largerArea: LARGER_AREA_OPTIONS.some((o) => o.value === v.largerArea) ? (v.largerArea as LargerArea) : DEFAULT_LARGER_AREA,
     timetable: Array.isArray(v.timetable) ? v.timetable.filter(isClassSlot) : [],
     places: Array.isArray(v.places) ? v.places.flatMap(toPlace) : [],
+    exclusions: Array.isArray(v.exclusions) ? v.exclusions.filter(isExclusionPlan) : [],
     savedAt: typeof v.savedAt === 'string' ? v.savedAt : null,
   }
 }
