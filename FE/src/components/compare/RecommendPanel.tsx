@@ -472,7 +472,7 @@ function NotRecommendedItem({ item, property }: { item: NotRecommended; property
   )
 }
 
-// 챗봇에서 승인한 장소 조건 (술집 근처 제외 등). 여기서 해제하면 생활 프로필에서 지우고 다시 추천한다.
+// 챗봇이 적용한 장소 조건 (술집 근처 제외 등). 여기서 해제하면 생활 프로필에서 지우고 다시 추천한다.
 function PlaceConditions({ profile, counts }: { profile: Profile; counts: Record<string, number> }) {
   const { saveProfile } = useProfile()
   if (profile.exclusions.length === 0) return null

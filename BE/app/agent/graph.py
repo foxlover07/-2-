@@ -72,6 +72,7 @@ class AgentState(TypedDict, total=False):
     status: str
     llm_error_kind: str | None  # busy · quota · auth · not_found · bad_response · other
     response: str
+    lead_text: str | None       # 답변 맨 앞에 붙는 서버 문장 ('바뀐 것' — 제외 조건을 바로 적용했을 때)
     # 턴 기록 (trace): 거친 노드와 걸린 시간, 사용 모델, 설명 출처
     trace_steps: list[dict[str, Any]]
     trace: dict[str, Any] | None
@@ -123,7 +124,7 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         out: AgentState = {
             "intent": None, "extraction": None, "notes": [], "pending_required_fields": [],
             "scenario_profile": None, "scenario_recommendation": None, "comparison": None,
-            "analysis": None, "analysis_facts": None, "policy": None, "profile_changed": False, "blocked": None, "status": "ok", "llm_error_kind": None, "response": "", "trace": None,
+            "analysis": None, "analysis_facts": None, "policy": None, "profile_changed": False, "blocked": None, "status": "ok", "llm_error_kind": None, "response": "", "trace": None, "lead_text": None,
             "pending_commit": None, "confirm_question": None, "confirm_declined": False,
         }
         # FE 에 저장된 프로필이 오면 이번 턴의 현재 조건으로 쓴다 (폼과 챗봇이 같은 조건)
@@ -166,6 +167,12 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         if ex.intent in ("recommend", "update", "analyze"):  # 분석 요청에 같이 온 조건도 저장
             new, n = tools.apply_changes(current, ex.changes)
             notes += n
+            # 장소 제외 조건은 확인 질문 없이 바로 적용하고 '바뀐 것'을 답변 맨 앞에 (11/15 팀 결정).
+            # 적용하면 남는 매물이 0개일 때만 그 조건을 넣지 않고 되묻는다.
+            added = [e for e in new.exclusions if e not in current.exclusions]
+            if added:
+                new, lead = apply_exclusions_now(current, new, added)
+                out["lead_text"] = lead
             if new != current:
                 commit = dict(previous_profile=_dump(current), previous_recommendation=state.get("last_recommendation"),
                               current_profile=_dump(new), profile_changed=True)
@@ -316,6 +323,8 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
                     text, source = fallback_text(facts), "fallback_ungrounded"
             except (LLMError, LLMUnavailable):
                 text, source = fallback_text(facts), "fallback_llm_failed"
+        if state.get("lead_text"):
+            text = f"{state['lead_text']}\n\n{text}" if text else state["lead_text"]
         msgs = [*state.get("messages", []), {"role": "user", "content": state["user_message"]},
                 {"role": "assistant", "content": text}][-MAX_MESSAGES:]
         trace = make_trace(state, source, explain_model)
@@ -690,18 +699,37 @@ def _show(v: Any) -> str:
     return f"{v:g}" if isinstance(v, float) else str(v)
 
 
+def apply_exclusions_now(current: AgentProfile, new: AgentProfile, added: list) -> tuple[AgentProfile, str]:
+    """새 장소 제외 조건을 적용해 본다 → (저장할 프로필, 답변 맨 앞 문장).
+
+    빠진 수·남은 수는 같은 엔진으로 조건 없이/있이 추천을 돌려 센다 (상가정보, 외부 호출 없음).
+    필수 조건이 아직 없어 추천을 돌릴 수 없으면 개수 없이 적용만 알린다.
+    """
+    without = new.model_copy(update={"exclusions": [e for e in new.exclusions if e not in added]})
+    lines = ["바뀐 것: 장소 제외 조건을 추가했어요.", *tools.exclusion_lines(added)]
+    if not tools.missing_fields(new) and tools.university_listing_count(new.university):
+        before = tools.run_recommendation(without)
+        after = tools.run_recommendation(new)
+        if after.total_ranked == 0 and before.total_ranked > 0:
+            return without, "\n".join([
+                "이 장소 조건을 적용하면 남는 매물이 없어서 아직 적용하지 않았어요.", *tools.exclusion_lines(added),
+                "거리나 개수 기준을 바꾸거나 다른 조건을 풀어 볼까요?"])
+        lines.append(f"→ {before.total_ranked}개 중 {before.total_ranked - after.total_ranked}개가 빠지고 "
+                     f"{after.total_ranked}개가 남았어요.")
+    lines.append("상가정보(소상공인시장진흥공단) 등록 업소 기준, 직선거리예요. "
+                 "조건을 빼려면 \"○○ 조건 빼 줘\"라고 하거나 비교 화면의 장소 조건 칩에서 지우면 돼요.")
+    return new, "\n".join(lines)
+
+
 def confirm_question(before: AgentProfile, after: AgentProfile, kind: str) -> str | None:
     """기존 입력이 지워지는 변경이면 확인 질문, 아니면 None.
 
     - update: 학교가 바뀌면서 그 학교 기준 수업 건물·시간표가 지워질 때
     - revert: 직전 조건으로 되돌릴 때 두 항목 이상이 바뀌면
+    (장소 제외 조건은 묻지 않고 바로 적용한다 — apply_exclusions_now)
     """
     diff = tools.profile_diff(before, after)
     if kind == "update":
-        added = [e for e in after.exclusions if e not in before.exclusions]
-        if added:
-            return ("다음 장소 조건으로 매물을 빼고 추천할까요? (네 / 아니요)\n" + "\n".join(tools.exclusion_lines(added))
-                    + "\n상가정보(소상공인시장진흥공단) 등록 업소 기준이며 거리는 직선거리입니다.")
         lost = before.university is not None and after.university != before.university and             (before.department_buildings or before.timetable)
         if not lost:
             return None

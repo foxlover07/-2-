@@ -688,20 +688,24 @@ def P(place, want, **kw):
     return [PlacePref(place=place, want=want, **kw)]
 
 
-def test_place_condition_asks_plan_then_applies(with_coords):
+def test_place_condition_applies_now_and_says_what_changed(with_coords):
+    """11/15 팀 결정: 장소 제외 조건은 확인 질문 없이 바로 적용하고 답변 맨 앞에 '바뀐 것'(빠진 수·남은 수)."""
     from app.agent.graph import to_response_parts
 
     c = TurnChat([X("recommend", **{**FULL, "budget_manwon": 200}), X("update", place_prefs=P("술집", "avoid"))])
     s1 = c.say("추천")
     assert {"P001", "P002"} <= set(s1["last_recommendation"]["ranks"])
-    parts = to_response_parts(c.say("술집 근처는 싫어"))
-    assert parts["status"] == "confirm" and "반경 100m 안에 술집(주점)이(가) 1곳 이상이면 제외" in parts["assistant_message"]
-    assert parts["updated_profile"].exclusions == []  # 승인 전에는 저장 안 함
-    s = c.say("네")
+    s = c.say("술집 근처는 싫어")
+    parts = to_response_parts(s)
+    total = s1["last_recommendation"]["total_ranked"]
+    msg = parts["assistant_message"]
+    assert parts["status"] == "ok" and msg.startswith("바뀐 것: 장소 제외 조건을 추가했어요.")
+    assert "반경 100m 안에 술집(주점)이(가) 1곳 이상이면 제외" in msg and f"{total}개 중 2개가 빠지고 {total - 2}개가 남았어요" in msg
+    assert "조건 빼 줘" in msg   # 되돌리는 방법
     ranks = s["last_recommendation"]["ranks"]
     assert "P001" not in ranks and "P002" not in ranks and s["last_recommendation"]["exclusion_counts"] == {"술집": 2}
-    assert s["current_profile"]["exclusions"][0]["source_text"] == "술집"
-    assert s["comparison"]["total_after"] == s1["last_recommendation"]["total_ranked"] - 2
+    assert s["current_profile"]["exclusions"][0]["source_text"] == "술집" and parts["profile_changed"]
+    assert s["comparison"]["total_after"] == total - 2
 
 
 def test_place_condition_matches_direct_engine_and_api(with_coords):
@@ -710,8 +714,7 @@ def test_place_condition_matches_direct_engine_and_api(with_coords):
     from app.place_search import LocalStoreSearcher
 
     c = TurnChat([X("recommend", **{**FULL, "budget_manwon": 200}, place_prefs=P("편의점", "near", radius_m=100))])
-    c.say("편의점이 100m 안에 있는 곳으로")
-    s = c.say("네")
+    s = c.say("편의점이 100m 안에 있는 곳으로")
     plans = [ExclusionPlan.model_validate(e) for e in s["current_profile"]["exclusions"]]
     props = data.load_properties()
     d = recommend(props, direct_req(budget_manwon=200, exclusions=plans), travel=data.load_travel_times(props),
@@ -722,20 +725,18 @@ def test_place_condition_matches_direct_engine_and_api(with_coords):
     assert [r["property_id"] for r in api["ranked"]] == ["P003"]
 
 
-def test_place_condition_declined_and_unsupported_and_remove(with_coords):
-    c = TurnChat([X("recommend", **{**FULL, "budget_manwon": 200}), X("update", place_prefs=P("술집", "avoid")),
+def test_place_condition_blocked_when_nothing_left_and_unsupported_and_remove(with_coords):
+    c = TurnChat([X("recommend", **{**FULL, "budget_manwon": 200}), X("update", place_prefs=P("편의점", "near", radius_m=1)),
                   X("update", place_prefs=P("도서관", "near")), X("update", place_prefs=P("노래방", "avoid", max_count=2)),
                   X("update", remove_exclusions=["노래방"])])
     s1 = c.say("추천")
-    c.say("술집 싫어")
-    s = c.say("아니요")
-    assert s["current_profile"]["exclusions"] == [] and s["current_profile"] == s1["current_profile"]
+    s = c.say("편의점 1m 안")   # 남는 매물이 0개 → 적용하지 않고 되묻는다 (유일하게 되묻는 경우)
+    assert s["current_profile"] == s1["current_profile"] and s["response"].startswith("이 장소 조건을 적용하면 남는 매물이 없어서")
     s = c.say("도서관 가까이")
     assert s["current_profile"]["exclusions"] == [] and any("도서관" in n and "확인할 수 없어" in n for n in s["notes"])
-    c.say("노래방 2곳까지는 괜찮아")
-    s = c.say("네")
+    s = c.say("노래방 2곳까지는 괜찮아")
     assert s["current_profile"]["exclusions"][0]["conditions"][0]["exclude_if"] == {"op": ">", "value": 2.0}
-    s = c.say("노래방 조건 빼 줘")  # 지우기는 확인 없이
+    s = c.say("노래방 조건 빼 줘")
     assert s["status"] == "ok" and s["current_profile"]["exclusions"] == []
 
 
