@@ -42,7 +42,18 @@ DEFAULT_DAILY_LIMIT = 200    # 이 기능의 하루 카카오 호출 상한 (사
 MAX_PLACES = 3               # 저장하는 자주 가는 곳 수
 ROUTE_MODE = "BROAD_FIRST"   # 기존 경로 수집(pipeline)과 같은 값
 CANDIDATES_SHOWN = 3
-REF_DIR = REPO_ROOT / "DB" / "ref"
+
+
+def _ref_dir() -> Path:
+    """건물 기준표 폴더. BUILDING_REF_DIR 로 바꿀 수 있다 (배포: Render Secret Files 의 /etc/secrets). 상대 경로는 BE 기준."""
+    v = (os.getenv("BUILDING_REF_DIR") or _read("BUILDING_REF_DIR") or "").strip()
+    if not v:
+        return REPO_ROOT / "DB" / "ref"
+    p = Path(v)
+    return p if p.is_absolute() else (REPO_ROOT / "BE" / p).resolve()
+
+
+REF_DIR = _ref_dir()
 CACHE_FIELDS = ["property_id", "place_id", "place_name", "status", "walk_seconds", "distance_m", "route_mode", "checked_at"]
 
 
