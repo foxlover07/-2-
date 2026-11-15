@@ -106,10 +106,11 @@ export function checkForm(form: FormState, deptBuildings: string[], ttBuildings:
     if (err) rowErrors[row.id] = err
   }
   let departmentError: string | null = null
-  if (form.departmentChoice === CUSTOM_DEPARTMENT && form.customDepartment.trim() === '') {
-    departmentError = '학과 이름을 입력해 주세요.'
-  } else if (deptBuildings.length > 0 && form.departmentBuildings.some((b) => !deptBuildings.includes(b))) {
-    departmentError = '목록에 없는 학과 건물이 있습니다. 다시 골라 주세요.'
+  // 학과 이름·학년 칸은 없앴다 (2026-11-16). 예전에 저장된 학과 이름은 그대로 두고 검사하지 않는다
+  const unknown = deptBuildings.length > 0 ? form.departmentBuildings.filter((b) => !deptBuildings.includes(b)) : []
+  if (unknown.length > 0) {
+    // 예전 이름·다른 대학 건물이 저장돼 있을 때. 화면에서 빨간 칩을 눌러 뺄 수 있다
+    departmentError = `지금 학교 건물 목록에 없는 건물이 저장돼 있어요: ${unknown.join(', ')}. 눌러서 빼고 다시 골라 주세요.`
   }
   const errors = {
     budget: budget === undefined ? POSITIVE : null,
@@ -130,7 +131,7 @@ export function checkForm(form: FormState, deptBuildings: string[], ttBuildings:
 }
 
 // 검증을 통과한 폼 → 저장값. savedAt 은 저장할 때 채운다.
-export function toProfile(form: FormState, check: FormCheck): Omit<Profile, 'savedAt' | 'exclusions'> {
+export function toProfile(form: FormState, check: FormCheck): Omit<Profile, 'savedAt' | 'exclusions' | 'frequentPlaces'> {
   const timetable: ClassSlot[] = form.timetable.map(({ day, start, end, building }) => ({ day, start, end, building }))
   const places: FrequentPlace[] = form.places.map(({ area, visitsPerWeek }) => ({ area, visitsPerWeek }))
   return {

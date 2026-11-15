@@ -76,8 +76,10 @@ def test_buildings_endpoint_counts_coverage():
     from app.main import app
 
     data = TestClient(app).get("/recommend/buildings").json()
-    assert {b["name"] for b in data} == {"ECC", "이화·포스코관", "학관", "공과대학"}
-    assert all(b["covered"] == b["total"] == 10 for b in data)
+    covered = [b for b in data if b["covered"]]
+    assert {b["name"] for b in covered} == {"ECC", "이화·포스코관", "학관", "공과대학"}
+    assert all(b["covered"] == b["total"] == 10 for b in covered)
+    assert data[: len(covered)] == covered  # 도보시간이 있는 건물이 먼저
 
 
 def test_data_csv_path_accepts_several_files_and_rejects_duplicate_ids(monkeypatch, tmp_path):

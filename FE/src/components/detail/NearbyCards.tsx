@@ -1,9 +1,22 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Building2, Info, Receipt, Store } from 'lucide-react'
+import { Building2, ExternalLink, FileText, Info, ListChecks, Receipt, Store } from 'lucide-react'
 import { Badge, Card, Loading } from '../common'
 import { ApiError } from '../../services/api'
-import { getAmenities, getBuilding, getMarketCompare } from '../../services/marketService'
-import type { Amenities, AmenityCategory, BuildingInfo, MarketCompare } from '../../types/market'
+import {
+  getAmenities,
+  getBuilding,
+  getContractCheck,
+  getMarketCompare,
+  getRelatedPolicies,
+} from '../../services/marketService'
+import type {
+  Amenities,
+  AmenityCategory,
+  BuildingInfo,
+  ContractCheck,
+  MarketCompare,
+  RelatedPolicies,
+} from '../../types/market'
 import { cx } from '../../utils/cx'
 import { formatManwon } from '../../utils/format'
 
@@ -66,6 +79,139 @@ function Notes({ notes, source, extra }: { notes: string[]; source: string; extr
         {extra && ` · ${extra}`}
       </p>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------- 계약 전 확인
+// 일반 점검 목록 + 서비스가 이 매물에 대해 가진 사실(실거래 비교·건축물대장·보증금). 안전 여부를 판정하지 않는다.
+
+export function ContractCheckCard({ propertyId }: { propertyId: string }) {
+  const load = useLoad(propertyId, getContractCheck)
+  return (
+    <Card>
+      <CardHeader icon={<ListChecks className="size-5 text-blue" aria-hidden />} title="계약 전 확인" />
+      {load.kind !== 'ready' ? <Status load={load} label="계약 전 확인 목록" /> : <ContractCheckBody c={load.data} />}
+    </Card>
+  )
+}
+
+function ContractCheckBody({ c }: { c: ContractCheck }) {
+  return (
+    <>
+      <div className="mt-3 flex flex-col gap-4">
+        {c.phases.map((s) => (
+          <section key={s.phase}>
+            <h3 className="text-sm font-bold text-text">{s.phase}</h3>
+            <ul className="mt-1.5 flex flex-col gap-2">
+              {s.items.map((it) => (
+                <li key={it.text} className="text-sm break-keep">
+                  <p className="text-text">
+                    {it.text}
+                    {it.link && (
+                      <>
+                        {' '}
+                        <a href={it.link.url} target="_blank" rel="noreferrer" className="text-xs text-blue underline">
+                          {it.link.name}
+                        </a>
+                      </>
+                    )}
+                  </p>
+                  {it.fact && (
+                    <p className="mt-1 rounded-control bg-blue-50 px-2.5 py-1.5 text-xs text-navy">
+                      <span className="font-bold">이 매물:</span> {it.fact}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+      <Notes notes={c.notes} source={c.source} />
+    </>
+  )
+}
+
+// ---------------------------------------------------------------- 관련 정책 안내
+// 매물의 임대 형태(월세/전세)·지역과 관련된 공식 정책. 자격(대상자 여부)을 판단하지 않고, 지원 금액을 유지비에 넣지 않는다.
+
+export function RelatedPoliciesCard({ propertyId }: { propertyId: string }) {
+  const load = useLoad(propertyId, getRelatedPolicies)
+  return (
+    <Card>
+      <CardHeader icon={<FileText className="size-5 text-blue" aria-hidden />} title="관련 정책 안내" />
+      {load.kind !== 'ready' ? <Status load={load} label="관련 정책" /> : <RelatedPoliciesBody r={load.data} />}
+    </Card>
+  )
+}
+
+function RelatedPoliciesBody({ r }: { r: RelatedPolicies }) {
+  const extra = r.fetched_at ? `기준 ${r.fetched_at.slice(0, 10)}` : undefined
+  if (!r.available || r.items.length === 0) {
+    return (
+      <>
+        <p className="mt-3 text-sm break-keep text-muted">
+          {r.reason ?? `이 매물(${r.rent_kind ?? '임대 형태 미상'})과 관련된 정책을 정책 데이터에서 찾지 못했습니다.`}
+        </p>
+        <OfficialLinks links={r.official_links} />
+        <Notes notes={[...r.notes, r.disclaimer]} source={r.source} extra={extra} />
+      </>
+    )
+  }
+  return (
+    <>
+      <p className="mt-2 text-xs text-muted">
+        {r.rent_kind} 매물 · {r.regions.filter((x) => !/특별시|광역시/.test(x)).join(' ') || r.regions.join(' ')} 기준
+      </p>
+      <ul className="mt-3 flex flex-col gap-2.5">
+        {r.items.map((it) => {
+          const link = it.apply_url ?? it.ref_url
+          return (
+            <li key={it.policy_id} className="rounded-control border border-border px-3 py-2.5 text-sm break-keep">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-medium text-navy">{it.name}</span>
+                {(it.housing_types ?? []).map((t) => (
+                  <Badge key={t} tone="blue">
+                    {t}
+                  </Badge>
+                ))}
+                {it.region && <Badge tone="gray">{it.region}</Badge>}
+              </div>
+              {(it.support ?? it.summary) && (
+                <p className="mt-1 line-clamp-3 text-xs text-text">{it.support ?? it.summary}</p>
+              )}
+              {it.apply_period && <p className="mt-0.5 text-xs text-muted">신청 기간: {it.apply_period}</p>}
+              {it.status_note && <p className="mt-0.5 text-xs text-amber">참고: {it.status_note}</p>}
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs">
+                {link && (
+                  <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-blue underline">
+                    공식 페이지 <ExternalLink className="size-3" aria-hidden />
+                  </a>
+                )}
+                {(it.housing_evidence ?? []).length > 0 && (
+                  <span className="text-muted">분류 근거: {(it.housing_evidence ?? []).join(', ')}</span>
+                )}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+      <Notes notes={[...r.notes, r.disclaimer]} source={r.source} extra={extra} />
+    </>
+  )
+}
+
+function OfficialLinks({ links }: { links: Array<{ name: string; url: string }> }) {
+  return (
+    <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+      {links.map((l) => (
+        <li key={l.url}>
+          <a href={l.url} target="_blank" rel="noreferrer" className="text-blue underline">
+            {l.name}
+          </a>
+        </li>
+      ))}
+    </ul>
   )
 }
 

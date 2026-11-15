@@ -32,6 +32,13 @@ class Property(BaseModel):
     spot4_walk_min: float | None
     monthly_housing_cost_manwon: float | None
 
+    # ---- 선택 칸: 출처·거래 가능 여부 (pipeline.check_listing_status 로 다시 확인한 결과를 덮어쓴다)
+    source: str | None = None
+    source_listing_id: str | None = None
+    listing_status: str | None = None        # advertised_unverified(수집 때) / active / unavailable(거래 끝남·숨김)
+    listing_status_detail: str | None = None  # 원 사이트 상태 (직방 close·cancel 등)
+    listing_status_checked_at: str | None = None
+
     # ---- 선택 칸: 매물 상세 (jibsa 직방 목록·상세. 원본 표기 그대로)
     floor: str | None = None                 # "3", "반지하", "옥탑방", "지하1", "저층"/"중층"/"고층"
     building_floor: str | None = None        # 전체 층수 (문자열로 오기도 함)

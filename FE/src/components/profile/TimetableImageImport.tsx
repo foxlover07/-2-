@@ -21,7 +21,16 @@ interface Draft {
   issue: string | null
 }
 
-export function TimetableImageImport({ university, onAdd }: { university: string; onAdd: (rows: TimetableRow[]) => void }) {
+// 2026-11-16 사용자 결정: 사진으로 불러오면 기존 시간표에 더하지 않고 새로 읽은 수업으로 바꾼다.
+export function TimetableImageImport({
+  university,
+  existingCount,
+  onReplace,
+}: {
+  university: string
+  existingCount: number // 지금 표에 있는 수업 수 (바꾸면 지워진다는 안내용)
+  onReplace: (rows: TimetableRow[]) => void
+}) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +48,7 @@ export function TimetableImageImport({ university, onAdd }: { university: string
       setDrafts(
         res.slots.map((s, i) => ({
           key: i,
-          include: !s.issue || s.building === null, // 시간 오류만 기본 제외, 건물은 여기서 고르면 된다
+          include: !s.issue?.includes('시각'), // 시각 오류만 기본 제외. 건물 추정·미확인은 여기서 고르면 된다
           day: s.day,
           start: s.start,
           end: s.end,
@@ -60,7 +69,7 @@ export function TimetableImageImport({ university, onAdd }: { university: string
   const patch = (key: number, p: Partial<Draft>) => setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, ...p } : d)))
   const chosen = drafts.filter((d) => d.include)
   const add = () => {
-    onAdd(chosen.map((d) => ({ id: newRowId(), day: d.day, start: d.start, end: d.end, building: d.building })))
+    onReplace(chosen.map((d) => ({ id: newRowId(), day: d.day, start: d.start, end: d.end, building: d.building })))
     setResult(null)
     setDrafts([])
   }
@@ -75,7 +84,8 @@ export function TimetableImageImport({ university, onAdd }: { university: string
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-text">시간표 캡처로 불러오기</p>
           <p className="text-xs text-muted">
-            에브리타임 등 시간표 캡처를 올리면 AI가 수업 칸을 읽어요. 확인한 뒤 아래 표에 넣습니다. (PNG·JPG·WEBP, 5MB 이하)
+            에브리타임 등 시간표 캡처를 올리면 수업 칸을 읽어요. 확인한 뒤 지금 시간표를 새로 읽은 수업으로 바꿉니다. (PNG·JPG·WEBP,
+            5MB 이하)
           </p>
         </div>
         <input
@@ -115,40 +125,49 @@ export function TimetableImageImport({ university, onAdd }: { university: string
             <>
               <ul className="mt-3 flex flex-col gap-2">
                 {drafts.map((d) => (
-                  <li key={d.key} className="flex flex-wrap items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={d.include}
-                      onChange={(e) => patch(d.key, { include: e.target.checked })}
-                      aria-label={`${d.day} ${d.start} 수업 넣기`}
-                    />
-                    <span className="w-28 shrink-0 tabular-nums">
-                      {d.day} {d.start}~{d.end}
-                    </span>
-                    <Select
-                      aria-label={`${d.day} ${d.start} 강의 건물`}
-                      value={d.building}
-                      onChange={(e) => patch(d.key, { building: e.target.value })}
-                      className="min-w-0 flex-1"
-                    >
-                      <option value="">건물 선택 (읽은 표기: {d.buildingText || '없음'})</option>
-                      {result.buildings.map((b) => (
-                        <option key={b} value={b}>
-                          {b}
-                        </option>
-                      ))}
-                    </Select>
-                    {d.course && <span className="text-xs text-muted">{d.course}</span>}
-                    {d.issue && <Badge tone="amber">{d.issue}</Badge>}
+                  <li key={d.key} className="text-sm">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={d.include}
+                        onChange={(e) => patch(d.key, { include: e.target.checked })}
+                        aria-label={`${d.day} ${d.start} 수업 넣기`}
+                      />
+                      <span className="w-28 shrink-0 tabular-nums">
+                        {d.day} {d.start}~{d.end}
+                      </span>
+                      <Select
+                        aria-label={`${d.day} ${d.start} 강의 건물`}
+                        value={d.building}
+                        onChange={(e) => patch(d.key, { building: e.target.value })}
+                        className="min-w-0 flex-1"
+                      >
+                        <option value="">건물 선택</option>
+                        {result.buildings.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    {/* 읽은 글자·확인 사항은 둘째 줄 (건물 선택칸이 좁아지지 않게) */}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[8.5rem] text-xs text-muted">
+                      {d.course && <span>{d.course}</span>}
+                      {d.buildingText && <span>읽은 강의실: {d.buildingText}</span>}
+                      {d.issue && <Badge tone="amber">{d.issue}</Badge>}
+                    </div>
                   </li>
                 ))}
               </ul>
+              {existingCount > 0 && (
+                <p className="mt-3 text-xs text-amber">지금 시간표의 수업 {existingCount}개는 지우고 아래에서 고른 칸으로 바꿉니다.</p>
+              )}
               <div className="mt-3 flex justify-end gap-2">
                 <Button variant="secondary" size="sm" onClick={() => setResult(null)}>
                   취소
                 </Button>
                 <Button size="sm" disabled={chosen.length === 0} onClick={add}>
-                  선택한 {chosen.length}칸 시간표에 추가
+                  선택한 {chosen.length}칸으로 시간표 {existingCount > 0 ? '바꾸기' : '채우기'}
                 </Button>
               </div>
             </>

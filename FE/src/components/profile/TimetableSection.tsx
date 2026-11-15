@@ -1,10 +1,11 @@
-import { CalendarDays, Plus, Trash2, X } from 'lucide-react'
+import { CalendarDays, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DAYS, type Day } from '../../constants/recommend'
 import { PERIODS, groupConsecutive, periodRangeLabel, toPeriodRange } from '../../constants/periods'
 import { useUniversity } from '../../contexts/UniversityContext'
 import { Button, Chip, Select } from '../common'
 import { SectionCard } from './SectionCard'
+import { TimetableBuildings } from './TimetableBuildings'
 import { TimetableImageImport } from './TimetableImageImport'
 import { WeekGrid } from './WeekGrid'
 import { newRowId, type TimetableRow } from './profileForm'
@@ -21,6 +22,8 @@ interface TimetableSectionProps {
   // 건물별 안내 (예: 일부 매물만 도보시간이 있는 건물)
   buildingNotes?: Record<string, string>
   university?: string // 사진 입력에서 건물 이름을 맞출 대학 (없으면 선택한 대학)
+  budgetManwon?: number | null // 시간표 강의동 도보시간을 계산할 매물 범위 (유지비 상한)
+  depositBudgetManwon?: number | null
 }
 
 // 화면에 보이는 한 줄 = 같은 건물·같은 시간대의 수업들 (요일만 다름). 저장은 요일마다 한 행이다.
@@ -44,6 +47,8 @@ export function TimetableSection({
   buildings,
   buildingNotes = {},
   university: universityProp,
+  budgetManwon,
+  depositBudgetManwon,
 }: TimetableSectionProps) {
   const { university: selectedUniversity } = useUniversity()
   const university = (universityProp ?? selectedUniversity) as typeof selectedUniversity
@@ -130,6 +135,12 @@ export function TimetableSection({
   }
 
   const remove = (ids: number[]) => onRowsChange(rows.filter((r) => !ids.includes(r.id)))
+  // 시간표 전체 비우기 (저장해야 생활 프로필에 반영된다)
+  const clearAll = () => {
+    onRowsChange([])
+    resetEditor()
+    setNotice('시간표를 비웠습니다. 저장해야 추천에 반영됩니다.')
+  }
   const dayCount = new Set(rows.map((r) => r.day)).size
 
   return (
@@ -146,7 +157,15 @@ export function TimetableSection({
 
       {/* 캡처 불러오기: 사진을 읽고(OCR) → 확인·수정 → 표에 추가 (feat/decision-support) */}
       <div className="mb-3">
-        <TimetableImageImport university={university} onAdd={(added) => onRowsChange([...rows, ...added])} />
+        <TimetableImageImport
+          university={university}
+          existingCount={rows.length}
+          onReplace={(next) => {
+            onRowsChange(next)
+            resetEditor()
+            setNotice(`사진에서 읽은 수업 ${next.length}개로 시간표를 바꿨습니다. 저장해야 추천에 반영됩니다.`)
+          }}
+        />
       </div>
 
       {/* 에타 느낌의 주간 미리보기 (건물별 색) */}
@@ -188,6 +207,14 @@ export function TimetableSection({
           </li>
         ))}
       </ul>
+
+      {/* 시간표 강의동 목록 + 매물에서 도보시간 (직접 입력·사진 인식 공통) */}
+      <TimetableBuildings
+        university={university}
+        rows={rows}
+        budgetManwon={budgetManwon}
+        depositBudgetManwon={depositBudgetManwon}
+      />
 
       {/* 수업 추가 */}
       {editing ? (
@@ -263,10 +290,18 @@ export function TimetableSection({
         </div>
       ) : (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
-            <Plus className="size-4" aria-hidden />
-            추가하기
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+              <Plus className="size-4" aria-hidden />
+              추가하기
+            </Button>
+            {rows.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={clearAll}>
+                <RotateCcw className="size-4" aria-hidden />
+                시간표 비우기
+              </Button>
+            )}
+          </div>
           <p className="flex items-center gap-1 text-xs text-muted">
             <CalendarDays className="size-3.5" aria-hidden />주 {dayCount}일 · 수업 {rows.length}개
           </p>

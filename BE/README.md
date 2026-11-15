@@ -105,7 +105,7 @@ BE/
 
 ## 추천 (`app/scoring.py`)
 
-팀의 「추천 시스템 통합안」(2026-11-13 회의 확정안, `docs/recommend-integrated-design.md`)을 구현한다.
+팀의 「추천 시스템 통합안」(2026-11-13 회의 확정안, 상세는 통합 문서 `docs/PROJECT.md` 3장)을 구현한다.
 지금은 통합안 8장 구현 순서 중 **1~4번**까지 했다. 5번 챗봇은 미완성이다.
 v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /recommend/v2`는 이 통합안으로 합쳐 지웠다.
 

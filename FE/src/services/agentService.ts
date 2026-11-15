@@ -1,4 +1,4 @@
-import type { AgentProfile, ChatResponse, TimetableImageResponse } from '../types/agent'
+import type { AgentProfile, ChatMode, ChatResponse, TimetableImageResponse } from '../types/agent'
 import { parseStoredProfile, type Profile } from '../utils/profile'
 import { apiFetch } from './api'
 
@@ -21,10 +21,11 @@ export function toAgentProfile(p: Profile, isSaved: boolean, university: string)
     larger_area: p.largerArea,
     timetable: p.timetable,
     exclusions: p.exclusions,
+    frequent_places: p.frequentPlaces,
   }
 }
 
-/** 에이전트 프로필 → 생활 프로필. 챗봇이 모르는 항목(자주 가는 곳)은 지금 값을 그대로 둔다. */
+/** 에이전트 프로필 → 생활 프로필. 챗봇이 모르는 항목(폼의 예전 places)은 지금 값을 그대로 둔다. */
 export function fromAgentProfile(a: AgentProfile, current: Profile): Profile {
   const merged = {
     ...current,
@@ -39,6 +40,7 @@ export function fromAgentProfile(a: AgentProfile, current: Profile): Profile {
     largerArea: a.larger_area ?? current.largerArea,
     timetable: a.timetable,
     exclusions: a.exclusions,
+    frequentPlaces: a.frequent_places ?? current.frequentPlaces,
     savedAt: new Date().toISOString(),
   }
   // 저장 형식 검증을 한 번 더 거친다 (범위를 벗어난 값은 기본값)
@@ -49,11 +51,12 @@ export function chat(
   sessionId: string,
   message: string,
   profile: AgentProfile | null,
+  mode?: ChatMode,
   signal?: AbortSignal,
 ): Promise<ChatResponse> {
   return apiFetch<ChatResponse>('/agent/chat', {
     method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, message, profile }),
+    body: JSON.stringify({ session_id: sessionId, message, profile, mode }),
     signal,
   })
 }

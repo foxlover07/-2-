@@ -17,7 +17,7 @@ export function toRecommendRequest(p: Profile, university: string = DEFAULT_UNIV
   const preset = university === DEFAULT_UNIVERSITY ? DEPARTMENT_BUILDINGS[dept] : undefined
   return {
     university,
-    department: dept,
+    department: dept || '직접 선택', // 학과 칸은 없앴다 (BE 는 표시용으로만 받는다)
     // 예시표와 같으면 null 로 보내 BE 가 예시표를 쓰게 한다 (assumptions 에 출처가 남는다)
     department_buildings: preset && sameSet(preset, p.departmentBuildings) ? null : p.departmentBuildings,
     grade: p.grade ?? 1,
@@ -36,6 +36,7 @@ export interface BuildingCoverage {
   name: string
   covered: number // 도보시간이 있는 매물 수
   total: number
+  can_compute?: boolean // 건물 기준표에 좌표가 있어, 고르면 빈 매물을 그때 계산할 수 있는지
 }
 
 /** 그 대학에서 시간표에 고를 수 있는 건물 (BE GET /recommend/buildings). 도보시간이 있는 매물이 많은 순. */
@@ -45,4 +46,41 @@ export function getBuildings(university: string, signal?: AbortSignal): Promise<
 
 export function recommend(req: RecommendRequest, signal?: AbortSignal): Promise<RecommendResult> {
   return apiFetch<RecommendResult>('/recommend', { method: 'POST', body: JSON.stringify(req), signal })
+}
+
+// ---------------------------------------------------------------- 시간표 강의동 → 도보시간 (BE POST /recommend/building-walks)
+
+export interface BuildingWalkStat {
+  input: string // 요청한 이름 그대로 (줄임말 가능)
+  name: string | null // 표준 이름. 모르는 건물이면 null
+  can_compute: boolean // 좌표가 있어 빈 매물을 계산할 수 있는지
+  covered: number // 도보시간이 있는 매물 수
+  total: number
+  min_walk_min: number | null
+  median_walk_min: number | null
+}
+
+export interface BuildingWalksResponse {
+  buildings: BuildingWalkStat[]
+  walks: Record<string, Record<string, number | null>> // 매물 ID → 표준 건물 이름 → 편도 도보(분)
+  computed: number
+  notes: string[]
+}
+
+export function getBuildingWalks(
+  req: {
+    university: string
+    buildings: string[]
+    property_ids?: string[]
+    compute?: boolean
+    budget_manwon?: number | null
+    deposit_budget_manwon?: number | null
+  },
+  signal?: AbortSignal,
+): Promise<BuildingWalksResponse> {
+  return apiFetch<BuildingWalksResponse>('/recommend/building-walks', {
+    method: 'POST',
+    body: JSON.stringify(req),
+    signal,
+  })
 }

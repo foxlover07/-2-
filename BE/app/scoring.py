@@ -13,13 +13,14 @@
 
 import math
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from itertools import permutations
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.building_walks import catalog_names
 from app.buildings import resolve
 from app.exclusions import ExclusionPlan, ExclusionRunner, PlaceSearcher
 from app.models import Property
@@ -278,14 +279,15 @@ def travel_score(
     *,
     department_avg_min: float | None = None,
     timetable_avg_min: float | None = None,
+    frequent_avg_min: float | None = None,
     cfg: ScoringConfig = CONFIG,
 ) -> TravelScore | None:
     """이동 시간 점수 = Σ 부분 비중 × 부분 점수. 부분 점수는 편도 평균에 3.1장 규칙(기준 = 희망 통학 시간)을 적용한 것.
 
-    자주 가는 곳은 데이터 준비 중이라 늘 빠지고, 그 비중은 나머지에 나눈다.
-    값이 None 인 부분도 비중을 나머지에 나눈다. 모든 부분이 None 이면 None.
+    자주 가는 곳은 챗봇이 도보 경로를 계산한 매물에만 들어온다 (app.frequent_places). 없으면 빠진다.
+    값이 None 인 부분은 비중을 나머지에 나눈다. 모든 부분이 None 이면 None.
     """
-    avgs = {"department": department_avg_min, "timetable": timetable_avg_min}
+    avgs = {"department": department_avg_min, "frequent": frequent_avg_min, "timetable": timetable_avg_min}
     weights = travel_part_weights([k for k, v in avgs.items() if v is not None], cfg)
     if not weights:
         return None
@@ -400,6 +402,16 @@ def total_score(c: Candidate, weights: Mapping[str, float]) -> float:
 def rank_candidates(candidates: Iterable[Candidate], weights: Mapping[str, float]) -> list[Candidate]:
     """종합 점수 높은 순 → 유지비 낮은 순 → 매물 ID 순 (4.1장)."""
     return sorted(candidates, key=lambda c: (-total_score(c, weights), c.monthly_cost, c.property_id))
+
+
+def _ordered(candidates: list[Candidate], weights: Mapping[str, float], rerank: Sequence[str] | None) -> list[Candidate]:
+    """rerank 가 없으면 rank_candidates 그대로. 있으면 그 매물들을 앞에 두고 그 안에서만 다시 정렬한다."""
+    if not rerank:
+        return rank_candidates(candidates, weights)
+    keep = set(rerank)
+    head = [c for c in candidates if c.property_id in keep]
+    tail = [c for c in candidates if c.property_id not in keep]
+    return rank_candidates(head, weights) + rank_candidates(tail, weights)
 
 
 # ---------------------------------------------------------------- 4.2장 출력 모델
@@ -633,11 +645,16 @@ def recommend(
     travel: TravelTimes | None = None,
     searcher: PlaceSearcher | None = None,
     exclusion_cache: dict | None = None,
+    frequent: Mapping[str, float] | None = None,
+    frequent_rerank: Sequence[str] | None = None,
     cfg: ScoringConfig = CONFIG,
 ) -> RecommendResult:
     """입력 → 필터 → 요소별 절대 점수 → 1·2·3순위 가중합 → 순위 + 비추천 사유 + assumptions.
 
     searcher: 챗봇 장소 조건(nearby_count, nearest_distance)을 확인할 장소 검색 (없으면 장소 조건은 확인하지 않고 안내).
+    frequent: 매물 ID → 자주 가는 곳까지 편도 도보 평균(분). 챗봇이 상위 매물만 계산해 넘긴다 (없으면 지금과 같다).
+    frequent_rerank: 자주 가는 곳을 반영해 다시 정렬할 매물 ID (1차 순위의 상위 N개). 이 매물들이 앞자리를 그대로
+        차지하고 그 안에서만 순서가 바뀐다. 나머지는 1차 점수·순서 그대로 뒤에 온다.
     """
     # 2장 필터 1: 요청한 대학의 매물만 (다른 대학 매물은 목록에 넣지 않는다)
     properties = [p for p in properties if p.university == req.university]
@@ -648,7 +665,8 @@ def recommend(
     runner = ExclusionRunner(req.exclusions, searcher, cfg, exclusion_cache) if req.exclusions else None
 
     # 건물 이름을 표준 이름으로 (줄임말·띄어쓰기·가운뎃점 차이, app.buildings)
-    known = sorted({name for row in travel.values() for name in row})
+    # 학교 건물 목록(DB/ref)도 아는 건물이다: 도보시간이 없는 매물은 '도보시간 정보 없음'으로 빠진다 (B 방식, app.building_walks)
+    known = sorted({name for row in travel.values() for name in row} | set(catalog_names(req.university)))
     renamed: list[tuple[str, str]] = []
 
     def std(name: str) -> str:
@@ -667,9 +685,11 @@ def recommend(
         if unknown:
             raise UnknownBuildingError(unknown, known)
 
-    # 이동 시간 부분: 학과 건물은 항상, 시간표는 입력했을 때, 자주 가는 곳은 데이터 준비 중
+    # 이동 시간 부분: 학과 건물은 항상, 시간표는 입력했을 때, 자주 가는 곳은 챗봇이 계산한 매물만
     part_weights = travel_part_weights(["department"] + (["timetable"] if timetable else []), cfg)
-    notes.append("자주 가는 곳은 데이터 준비 중이라 이동 시간 안의 비중을 다른 부분에 비율대로 나눴습니다.")
+    frequent = frequent or {}
+    if not frequent:
+        notes.append("자주 가는 곳은 데이터 준비 중이라 이동 시간 안의 비중을 다른 부분에 비율대로 나눴습니다.")
     if not timetable:
         notes.append("시간표를 입력하지 않아 이동 시간은 학과 건물만으로 계산했습니다.")
 
@@ -712,6 +732,7 @@ def recommend(
             req.desired_commute_min,
             department_avg_min=department_avg_walk(times, dept),
             timetable_avg_min=timetable_avg_walk(times, timetable),
+            frequent_avg_min=frequent.get(pid),
             cfg=cfg,
         )
         candidates.append(Candidate(
@@ -779,7 +800,7 @@ def recommend(
             area_m2=c.area,
             over_budget=c.over_budget,
         )
-        for i, c in enumerate(rank_candidates(candidates, weights), start=1)
+        for i, c in enumerate(_ordered(candidates, weights, frequent_rerank), start=1)
     ]
     if 0 < len(ranked) < cfg.displayed_top_n:
         notes.append(f"조건에 맞는 매물이 {len(ranked)}개뿐입니다.")

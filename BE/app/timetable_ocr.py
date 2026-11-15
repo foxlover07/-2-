@@ -24,6 +24,8 @@ DAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"]
 # 강의실 표기: 건물 줄임말(한글·영문) + 선택적 알파벳 + 숫자 (예: 캠B134, 학109, 포366, 경영313, ECC B142)
 # 건물 부분은 한글만 또는 영문만 (캠B134 → '캠', ECC B142 → 'ECC')
 _ROOM_RE = re.compile(r"^([가-힣]{1,6}|[A-Za-z]{2,8})\s*([A-Za-z]?\d{2,4}[\w-]*)\s*(호|호실)?$")
+# 한 줄에 과목명이 붙은 강의실 표기: 줄 끝 '건물 글자 + (알파벳)숫자 + (호)' (예: '…교양관609호', '… 정보통신관 B101호')
+_ROOM_TAIL_RE = re.compile(r"([가-힣A-Za-z][가-힣A-Za-z()\s]*?[가-힣A-Za-z])\s*[A-Za-z]?\d{2,4}[\w-]*\s*(?:호|호실)?$")
 _SNAP_MIN = 5
 
 
@@ -249,6 +251,14 @@ def _parse_block_text(lines: list[str]) -> tuple[str | None, str, str]:
             room_i = i
             break
     if room_i is None:
+        # 과목명·건물·호수가 한 줄로 붙어 읽힌 경우 (예: '전산수학기정운외T 교양관609호', '이산수학(영강 정보통신관 B101호').
+        # 줄 끝의 호수 앞 글자를 건물 표기로 쓴다. 표준 이름 맞추기는 서버 검증(tools.match_building_text)이 한다
+        for i in range(len(lines) - 1, -1, -1):
+            m = _ROOM_TAIL_RE.search(lines[i].strip())
+            if m:
+                head = lines[:i]
+                course = "".join(s.strip() for s in head) or None
+                return course, lines[i].strip(), m.group(1).strip()
         course = "".join(lines).strip() or None
         return course, "", ""
     room = lines[room_i].strip()

@@ -5,12 +5,10 @@ import { Button } from '../components/common'
 import { PageContainer } from '../components/layout/PageContainer'
 import { ConditionsSection } from '../components/profile/ConditionsSection'
 import { DepartmentSection } from '../components/profile/DepartmentSection'
-import { PlacesSection } from '../components/profile/PlacesSection'
 import { PrioritySection } from '../components/profile/PrioritySection'
 import { TimetableSection } from '../components/profile/TimetableSection'
 import { UniversitySection } from '../components/profile/UniversitySection'
 import { checkForm, formSignature, toForm, toProfile, type FormState } from '../components/profile/profileForm'
-import { DEFAULT_UNIVERSITY } from '../constants/universities'
 import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { API_URL } from '../services/api'
@@ -56,32 +54,44 @@ export function ProfilePage() {
 
   // 시간표 건물: BE 도보시간 표가 있으면 그 건물 목록(일부 매물만 계산된 건물 포함), 없으면 매물 데이터의 강의동
   // 응답을 대학과 함께 저장해, 대학을 바꾸면 새 응답이 올 때까지 이전 대학 건물을 쓰지 않는다
-  const [buildingsResp, setBuildingsResp] = useState<{ university: string; list: BuildingCoverage[] } | null>(null)
-  const apiBuildings = buildingsResp?.university === university ? buildingsResp.list : null
+  // list: 'failed' = 서버 목록을 못 받음 → 매물 데이터의 강의동으로 대신한다
+  const [buildingsResp, setBuildingsResp] = useState<{ university: string; list: BuildingCoverage[] | 'failed' } | null>(
+    null,
+  )
+  const resp = buildingsResp?.university === university ? buildingsResp.list : null
+  const apiBuildings = resp === 'failed' ? null : resp
   useEffect(() => {
     if (API_URL === null) return
     const ctrl = new AbortController()
     getBuildings(university, ctrl.signal)
       .then((list) => setBuildingsResp({ university, list }))
-      .catch(() => {})
+      .catch(() => {
+        if (!ctrl.signal.aborted) setBuildingsResp({ university, list: 'failed' })
+      })
     return () => ctrl.abort()
   }, [university])
-  // 매물의 1/4 이상에 도보시간이 있는 건물만 고르게 한다. 그보다 적은 건물(예전 표본에서만 계산된 건물)을 고르면
-  // 대부분의 매물이 추천에서 빠지기 때문이다. 계산이 늘면 자동으로 목록에 들어온다.
-  const MIN_COVERAGE = 0.25
+  // 학교 건물 전체를 고르게 한다 (2026-11-16 'B 방식'). 도보시간이 없는 매물은 추천할 때 BE 가 그때 계산한다.
+  // 기준표에 없고 도보시간도 일부뿐인 건물(can_compute=false)은 빈 매물을 계산할 수 없으니 넣지 않는다.
+  // 서버 목록을 받는 중에는 빈 목록 (검사하지 않음): 매물 강의동 4곳만으로 검사하면 정상 건물도 '목록에 없음'이 된다
+  const loadingBuildings = API_URL !== null && resp === null
   const ttBuildings = useMemo(
-    () => apiBuildings?.filter((b) => b.covered / b.total >= MIN_COVERAGE).map((b) => b.name) ?? spotNames,
-    [apiBuildings, spotNames],
+    () =>
+      loadingBuildings
+        ? []
+        : (apiBuildings?.filter((b) => b.can_compute || b.covered === b.total).map((b) => b.name) ?? spotNames),
+    [loadingBuildings, apiBuildings, spotNames],
   )
   const ttNotes = useMemo(
     () =>
       Object.fromEntries(
-        (apiBuildings ?? []).filter((b) => b.covered < b.total).map((b) => [b.name, `매물 ${b.covered}/${b.total}곳`]),
+        (apiBuildings ?? [])
+          .filter((b) => b.covered < b.total)
+          .map((b) => [b.name, b.covered === 0 ? '고르면 계산' : `매물 ${b.covered}/${b.total}곳 · 나머지는 고르면 계산`]),
       ),
     [apiBuildings],
   )
 
-  const check = checkForm(form, spotNames, ttBuildings)
+  const check = checkForm(form, ttBuildings, ttBuildings)
   const savedForm = useMemo(() => toForm(profile), [profile])
   const dirty = !isSaved || formSignature(form) !== formSignature(savedForm)
   // 저장된 값 기준으로 추천에 빠진 입력
@@ -92,7 +102,12 @@ export function ProfilePage() {
   const handleSave = () => {
     if (!check.canSave) return
     // 장소 조건(챗봇에서 승인)은 폼에 없으므로 저장된 값을 그대로 둔다
-    const next = { ...toProfile(form, check), exclusions: profile.exclusions, savedAt: new Date().toISOString() }
+    const next = {
+      ...toProfile(form, check),
+      exclusions: profile.exclusions,
+      frequentPlaces: profile.frequentPlaces, // 챗봇에서 정한 자주 가는 곳은 폼 저장으로 지우지 않는다
+      savedAt: new Date().toISOString(),
+    }
     saveProfile(next)
     setForm(toForm(next))
     setJustSaved(true)
@@ -115,12 +130,9 @@ export function ProfilePage() {
 
         <DepartmentSection
           step={2}
-          departmentChoice={form.departmentChoice}
-          customDepartment={form.customDepartment}
           departmentBuildings={form.departmentBuildings}
-          grade={form.grade}
-          buildings={spotNames}
-          hasPresets={university === DEFAULT_UNIVERSITY}
+          buildings={ttBuildings}
+          buildingNotes={ttNotes}
           error={check.departmentError}
           onChange={patch}
         />
@@ -147,9 +159,11 @@ export function ProfilePage() {
           buildings={ttBuildings}
           buildingNotes={ttNotes}
           university={university}
+          budgetManwon={check.budget ?? null}
+          depositBudgetManwon={check.deposit ?? null}
         />
 
-        <PlacesSection step={6} rows={form.places} onRowsChange={(places) => patch({ places })} />
+        {/* 자주 가는 곳은 2026-11-16 결정으로 챗봇에서 받는다 (저장된 places 는 그대로 보존) */}
       </div>
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">

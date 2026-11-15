@@ -93,7 +93,7 @@ def test_department_table_is_ewha_only():
 
 def test_unknown_building_raises():
     with pytest.raises(UnknownBuildingError):
-        recommend(PROPS, req(department_buildings=["중앙도서관"]))
+        recommend(PROPS, req(department_buildings=["없는건물관"]))
 
 
 # ---------------------------------------------------------------- 종합 점수 · 순위

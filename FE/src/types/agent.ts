@@ -2,6 +2,9 @@
 import type { Day, Factor, LargerArea } from '../constants/recommend'
 import type { ExclusionPlan } from './recommend'
 
+// 챗봇 모드 배너: 매물 추천 / 정책 안내 (BE ChatRequest.mode)
+export type ChatMode = 'recommend' | 'policy'
+
 export interface AgentProfile {
   university: string | null
   budget_manwon: number | null
@@ -15,6 +18,18 @@ export interface AgentProfile {
   larger_area: LargerArea | null
   timetable: Array<{ day: Day; start: string; end: string; building: string }>
   exclusions: ExclusionPlan[]
+  frequent_places?: FrequentPlaceRef[] // 챗봇이 카카오에서 찾은 자주 가는 곳 (BE app/frequent_places.FrequentPlace)
+}
+
+export interface FrequentPlaceRef {
+  name: string // 사용자 표현
+  visits_per_week: number
+  place_id: string // 카카오 장소 ID
+  place_name: string
+  address: string | null
+  latitude: number
+  longitude: number
+  campus_distance_m: number | null
 }
 
 export interface AgentTopItem {
@@ -34,6 +49,16 @@ export interface AgentTopItem {
   source_url: string | null
   walk_min: Record<string, number>
   same_house_ids: string[] // 같은 집일 수 있는 다른 광고 (TOP 에서는 묶어 하나만)
+  frequent_walk_min?: Record<string, number | null> // 자주 가는 곳 이름 → 편도 도보(분), null = 미확인
+}
+
+export interface FrequentSummary {
+  places: Array<{ name: string; place_name: string; address: string | null; visits_per_week: number }>
+  top_n: number // 도보 경로를 계산해 다시 정렬한 상위 매물 수
+  computed: number
+  cached: number
+  unknown: number // 계산 못 함 → 미확인
+  limited: number // 그중 하루 상한 때문
 }
 
 export interface AgentRecSummary {
@@ -45,9 +70,33 @@ export interface AgentRecSummary {
   top: AgentTopItem[]
   notes: string[]
   exclusion_counts: Record<string, number>
+  frequent?: FrequentSummary | null
 }
 
-export type AnalysisKind = 'pareto' | 'tradeoff' | 'sensitivity' | 'relaxation' | 'market' | 'amenities' | 'building'
+export type AnalysisKind =
+  | 'pareto'
+  | 'tradeoff'
+  | 'sensitivity'
+  | 'relaxation'
+  | 'market'
+  | 'amenities'
+  | 'building'
+  | 'excluded'
+
+// analysis kind=excluded 의 result (BE tools.excluded_analysis). 엔진 사유를 그대로 옮긴 것
+export interface ExcludedAnalysis {
+  total: number
+  ranked: number
+  excluded_count: number
+  stages: Array<{
+    stage: string
+    label: string
+    count: number
+    by_condition: Record<string, number>
+    examples: Array<{ property_id: string; address: string | null; reason: string }>
+  }>
+  not_recommended: Array<{ property_id: string; address: string | null; best_rank_elsewhere: number; message: string }>
+}
 
 // 분석 API(/analysis/*, /market/*) 응답과 같은 형식. 추천 순위는 바꾸지 않는 참고 분석.
 export interface AgentAnalysis {
@@ -123,15 +172,35 @@ export interface PolicyItem {
   agency: string | null
   region: string | null
   target_age: string | null
+  income_text?: string | null
   apply_period: string | null
+  apply_method?: string | null
+  documents?: string | null
+  screening?: string | null
   apply_url: string | null
   ref_url: string | null
   updated_at: string | null
+  status_note?: string | null
+  housing_types?: string[] // 월세 · 전세 · 보증금 · 공공임대 · 기숙사 (규칙 분류, 자격 판정 아님)
+  housing_evidence?: string[] // 분류 근거 (예: "이름: '월세'")
+}
+
+export type PolicyKind = 'info' | 'eligibility' | 'compare' | 'apply' | 'contract_safety'
+
+export interface ChecklistSection {
+  phase: string
+  items: Array<{ text: string; link: { name: string; url: string } | null }>
 }
 
 export interface PolicyResult {
   available: boolean
   query: string
+  kind?: PolicyKind
+  regions?: string[]
+  missing_names?: string[]
+  notes?: string[]
+  checklist?: ChecklistSection[]
+  checklist_source?: string | null
   items: PolicyItem[]
   total_matched: number
   reason: string | null

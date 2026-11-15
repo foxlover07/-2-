@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from app import frequent_places as fp
 from app.agent import tools
 from app.agent.schemas import UNIVERSITIES
 from app.scoring import FACTOR_LABELS
@@ -35,6 +36,9 @@ def capability_spec(university: str | None = None) -> str:
         f"단위(교환비): 편도 {_g(c.unit_travel_min)}분 = 월 {_g(c.unit_cost_manwon)}만 원 = {_g(c.unit_area_m2)}㎡.",
         "   이동 시간 = 학과 건물 평균 편도 도보시간(+ 시간표가 있으면 수업 건물 이동). 예산 = 유지비 vs 상한. "
         "면적 = 희망 면적 대비 (희망보다 넓은 쪽은 larger_area 선택: 좋음/상관없음/싫음).",
+        f"   자주 가는 곳(선택, 최대 {fp.MAX_PLACES}곳): 학교 {fp.SEARCH_RADIUS_M // 1000}km 안 장소만 카카오에서 찾아, "
+        f"1차 순위 상위 {fp.TOP_N}개 매물만 도보 경로를 계산하고 그 안에서 다시 정렬 (주 방문 횟수로 가중). "
+        "못 구한 매물은 '미확인'.",
         f"3) 1·2순위를 사용자가 고르고 3순위는 남은 요소. 순위별 비중 {', '.join(f'{round(x * 100)}%' for x in w)} 고정 "
         "(사용자가 비중 숫자를 정할 수 없다).",
         f"4) 필터를 통과한 매물을 모두 순위로 보여 주고 상위 {c.displayed_top_n}개를 강조. 점수가 같으면 유지비 낮은 순.",

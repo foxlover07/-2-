@@ -10,6 +10,7 @@ import {
   type Factor,
   type LargerArea,
 } from '../constants/recommend'
+import type { FrequentPlaceRef as AgentFrequentPlace } from '../types/agent'
 import type { ExclusionPlan } from '../types/recommend'
 import type { SpotVisits } from './walk'
 
@@ -26,6 +27,9 @@ export interface FrequentPlace {
   visitsPerWeek: number
 }
 
+// 챗봇이 카카오 장소 검색으로 찾은 자주 가는 곳 (BE app/frequent_places.FrequentPlace). 생활 프로필 폼에서는 고치지 않는다
+export type FrequentPlaceRef = AgentFrequentPlace
+
 export interface Profile {
   // 추천 입력 (BE scoring.RecommendRequest, 추천 시스템 통합안). 대학은 UniversityContext 에 따로 저장한다.
   department: string // '' = 미입력
@@ -41,6 +45,7 @@ export interface Profile {
   places: FrequentPlace[]
   // 챗봇에서 승인한 장소 조건 (술집 근처 제외 등, BE app/exclusions.ExclusionPlan). 폼에서는 고치지 않고 추천 화면에서 해제한다
   exclusions: ExclusionPlan[]
+  frequentPlaces: FrequentPlaceRef[]
   // 마지막 저장 시각 (ISO). 저장한 적이 없으면 null.
   savedAt: string | null
 }
@@ -58,6 +63,7 @@ export const EMPTY_PROFILE: Profile = {
   timetable: [],
   places: [],
   exclusions: [],
+  frequentPlaces: [],
   savedAt: null,
 }
 
@@ -87,6 +93,19 @@ function isClassSlot(v: unknown): v is ClassSlot {
 function toPlace(v: unknown): FrequentPlace[] {
   if (!isObj(v) || !EWHA_AREAS.includes(v.area as Area) || !isInt(v.visitsPerWeek) || v.visitsPerWeek < 0) return []
   return [{ area: v.area as Area, visitsPerWeek: v.visitsPerWeek }]
+}
+
+function isFrequentPlace(v: unknown): v is FrequentPlaceRef {
+  return (
+    isObj(v) &&
+    typeof v.name === 'string' &&
+    typeof v.place_id === 'string' &&
+    typeof v.place_name === 'string' &&
+    isInt(v.visits_per_week) &&
+    v.visits_per_week >= 1 &&
+    typeof v.latitude === 'number' &&
+    typeof v.longitude === 'number'
+  )
 }
 
 function parsePriorities(v: unknown): Factor[] {
@@ -121,6 +140,7 @@ export function parseStoredProfile(value: unknown): Profile | null {
     timetable: Array.isArray(v.timetable) ? v.timetable.filter(isClassSlot) : [],
     places: Array.isArray(v.places) ? v.places.flatMap(toPlace) : [],
     exclusions: Array.isArray(v.exclusions) ? v.exclusions.filter(isExclusionPlan) : [],
+    frequentPlaces: Array.isArray(v.frequentPlaces) ? v.frequentPlaces.filter(isFrequentPlace) : [],
     savedAt: typeof v.savedAt === 'string' ? v.savedAt : null,
   }
 }
@@ -128,9 +148,8 @@ export function parseStoredProfile(value: unknown): Profile | null {
 /** 추천 요청에 필요한 입력이 빠졌으면 그 목록, 다 있으면 빈 배열. */
 export function missingForRecommend(p: Profile): string[] {
   const missing: string[] = []
-  if (p.department.trim() === '') missing.push('학과')
-  if (p.departmentBuildings.length === 0) missing.push('학과 건물')
-  if (p.grade === null) missing.push('학년')
+  // 학과·학년은 입력받지 않는다 (2026-11-16). 수업 듣는 건물만 필요
+  if (p.departmentBuildings.length === 0) missing.push('수업 듣는 건물')
   if (p.priorities.length < 2) missing.push('우선순위 1·2순위')
   if (p.budgetManwon === null || p.budgetManwon <= 0) missing.push('유지비 상한')
   if (p.desiredCommuteMin === null) missing.push('희망 통학 시간')

@@ -16,6 +16,9 @@
   place_rule: {이름: {tool, radius_m?, value?}} — 서버가 만든 확인 기준
   no_places: true             — 장소 조건이 생기면 안 됨 (확인할 수 없는 장소 등)
   unsupported: true           — 계산 불가 요청을 unsupported 로 표시
+  policy_kind: [허용 종류…]    — intent=policy 일 때 질문 종류 (없으면 info 로 봄)
+  policy_names_min: n         — compare 에서 뽑은 정책 이름 수 하한
+  policy_regions: [지역…]      — policy_regions 에 들어 있어야 할 지역
 
 LLM 은 조건 추출(extract)만 부른다 (케이스 1개 = 호출 1회). 점수 계산·추천은 하지 않는다.
 장소 조건은 실제 대화에서는 확인 질문('네') 뒤에 저장되지만, 여기서는 확인 전 계획(apply_changes 결과)을 채점한다.
@@ -110,6 +113,12 @@ def score_case(case: dict[str, Any], ex: TurnExtraction) -> dict[str, bool]:
         checks["no_places"] = target.exclusions == cur.exclusions
     if e.get("unsupported"):
         checks["unsupported"] = bool(ex.unsupported)
+    if "policy_kind" in e:
+        checks["policy_kind"] = (ex.policy_kind or "info") in e["policy_kind"]
+    if "policy_names_min" in e:
+        checks["policy_names_min"] = len(ex.policy_names) >= e["policy_names_min"]
+    for r in e.get("policy_regions") or []:
+        checks[f"policy_regions.{r}"] = any(r in x for x in ex.policy_regions)
     return checks
 
 

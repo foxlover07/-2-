@@ -68,9 +68,20 @@ def test_validation_errors_are_422():
 
 
 def test_unknown_building_is_422_with_message():
-    res = post(department_buildings=["중앙도서관"])
+    res = post(department_buildings=["없는건물관"])
     assert res.status_code == 422
-    assert "중앙도서관" in res.json()["detail"]
+    assert "없는건물관" in res.json()["detail"]
+
+
+def test_catalog_building_without_walk_data_excludes_listings_not_422():
+    """건물 기준표에 있는 건물(중앙도서관)은 아는 건물: 도보시간을 계산 못 한 매물은 '도보시간 정보 없음'으로 빠진다 (B 방식).
+    테스트는 카카오를 끄므로(BUILDING_WALK_KAKAO=off) 계산하지 못한다."""
+    res = post(department_buildings=["중앙도서관"])
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ranked"] == []
+    assert any("도보시간 정보 없음" in e["reason"] for e in body["excluded"])
+    assert any("좌표가 없는 매물" in n for n in body["notes"])  # PoC CSV 에는 좌표가 없다
 
 
 def test_old_endpoints_are_gone():
@@ -82,5 +93,9 @@ def test_old_endpoints_are_gone():
 
 def test_buildings_endpoint_kept():
     data = client.get("/recommend/buildings").json()
-    assert {b["name"] for b in data} == {"ECC", "이화·포스코관", "학관", "공과대학"}
-    assert client.get("/recommend/buildings", params={"university": "고려대학교"}).json() == []
+    assert {b["name"] for b in data if b["covered"]} == {"ECC", "이화·포스코관", "학관", "공과대학"}
+    # 건물 기준표(DB/ref)의 나머지 건물도 고를 수 있다 (고르면 그때 계산)
+    assert {"중앙도서관", "동창회기념회관", "이화신세계관"} <= {b["name"] for b in data if b["can_compute"]}
+    ku = client.get("/recommend/buildings", params={"university": "고려대학교"}).json()
+    assert {"우당교양관", "정운오IT교양관", "정경관"} <= {b["name"] for b in ku}  # PoC 데이터엔 고대 매물이 없다
+    assert all(b["covered"] == 0 for b in ku)

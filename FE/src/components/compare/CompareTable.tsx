@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { Footprints, Trophy, Wallet, X } from 'lucide-react'
 import { Badge, PlaceholderImage } from '../common'
 import type { Property } from '../../types/property'
-import { getMonthlyFixedCost, isWithinBudget } from '../../utils/cost'
+import { budgetStatus, getMonthlyFixedCost } from '../../utils/cost'
 import { formatArea, formatManwon, formatMinutes } from '../../utils/format'
 import { getSpotNames, getWalkMin, getWeightedAvgWalk, type SpotVisits } from '../../utils/walk'
 import { cx } from '../../utils/cx'
@@ -147,9 +147,11 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
             <Row
               label={`예산 ${formatManwon(budget)}`}
               cells={cells((p) => {
-                const within = isWithinBudget(p, budget)
-                if (within === null) return <span className="text-muted">비교 불가</span>
-                return within ? <Badge tone="green">예산 이내</Badge> : <Badge tone="gray">예산 초과</Badge>
+                const status = budgetStatus(p, budget)
+                if (status === null) return <span className="text-muted">비교 불가</span>
+                if (status === 'within') return <Badge tone="green">예산 이내</Badge>
+                if (status === 'slack') return <Badge tone="amber">예산 초과 (여유 구간)</Badge>
+                return <Badge tone="gray">예산 초과 · 추천 제외</Badge>
               })}
             />
           )}

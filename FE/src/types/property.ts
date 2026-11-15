@@ -21,6 +21,12 @@ export interface Property {
   spot4_name: string | null
   spot4_walk_min: number | null
   monthly_housing_cost_manwon: number | null
+  // 출처·거래 가능 여부 (BE pipeline.check_listing_status 로 다시 확인한 결과)
+  source?: string | null
+  source_listing_id?: string | null
+  listing_status?: string | null // advertised_unverified / active / unavailable
+  listing_status_detail?: string | null
+  listing_status_checked_at?: string | null
   // 아래는 통합 매물 CSV 에만 있는 선택 칸 (BE models.Property 와 같은 이름)
   floor?: string | null
   building_floor?: string | null

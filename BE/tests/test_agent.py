@@ -472,6 +472,44 @@ def test_api_chat_uses_fe_profile(monkeypatch):
     assert body["recommendation_results"]["top"][0]["property_id"] == direct().ranked[0].property_id
 
 
+
+# 모드 배너 (recommend / policy) ------------------------------------------------
+
+def test_policy_mode_forces_policy_and_keeps_profile(monkeypatch):
+    """정책 모드: LLM 이 추천·조건 변경으로 판별해도 정책 안내로만 처리하고 조건을 바꾸지 않는다."""
+    from app.main import app
+    from app.routers import agent as agent_router
+
+    llm = ScriptedLLM([X("recommend", budget_manwon=50)])
+    monkeypatch.setattr(agent_router, "_provider_llm", lambda: llm)
+    body = TestClient(app).post("/agent/chat", json={"session_id": "mode-pol", "message": "월세 50만 원인데 받을 수 있는 지원",
+                                                     "mode": "policy"}).json()
+    assert body["intent"] == "policy" and body["profile_changed"] is False
+    assert body["recommendation_results"] is None and body["policy_results"] is not None
+
+
+def test_recommend_mode_redirects_policy_question(monkeypatch):
+    """추천 모드: 정책 질문이면 정책 검색 없이 모드 전환을 안내한다."""
+    from app.main import app
+    from app.routers import agent as agent_router
+
+    llm = ScriptedLLM([TurnExtraction(intent="policy", policy_query="월세 지원")])
+    monkeypatch.setattr(agent_router, "_provider_llm", lambda: llm)
+    body = TestClient(app).post("/agent/chat", json={"session_id": "mode-rec", "message": "월세 지원 알려줘",
+                                                     "mode": "recommend"}).json()
+    assert body["policy_results"] is None and "정책 안내" in body["assistant_message"]
+    assert body["profile_changed"] is False
+
+
+def test_mode_unset_keeps_auto_intent():
+    from app.agent.graph import apply_chat_mode
+
+    ex = X("recommend", budget_manwon=50)
+    assert apply_chat_mode(ex, None) == (ex, None)
+    assert apply_chat_mode(ex, "recommend") == (ex, None)
+    hi = X("smalltalk")
+    assert apply_chat_mode(hi, "policy")[0].intent == "smalltalk"
+
 # 추천 명세 · 턴 기록 ------------------------------------------------------------
 
 def test_capability_spec_comes_from_code_and_data():
@@ -603,28 +641,27 @@ def test_yes_no():
 
 # 시간표 사진 입력 ------------------------------------------------------------------
 
-def test_timetable_image_endpoint_checks_slots(monkeypatch):
-    from app.agent.schemas import SlotRead, TimetableRead
+def test_timetable_image_endpoint_uses_ocr_only(monkeypatch):
+    """2026-11-16 결정: 시간표 사진은 OCR 로만 읽고 LLM(외부)으로 보내지 않는다."""
+    from app import timetable_ocr
     from app.main import app
     from app.routers import agent as agent_router
+    from app.timetable_ocr import OcrResult, OcrSlot
 
-    read = TimetableRead(slots=[
-        SlotRead(day="월", start="09:00", end="10:15", building_text="공대", course="자료구조"),
-        SlotRead(day="수", start="13:00", end="14:15", building_text="ECC B146"),
-        SlotRead(day="목", start="10:30", end="11:45", building_text="우주과학관"),
-        SlotRead(day="금", start="15:00", end="14:00", building_text="학관"),
-    ], notes=["토요일 칸은 흐려서 못 읽음"])
-    llm = ScriptedLLM([read])
-    monkeypatch.setattr(agent_router, "_provider_llm", lambda: llm)
+    def no_llm():
+        raise AssertionError("시간표 사진을 LLM 으로 보내면 안 됨")
+
+    monkeypatch.setattr(agent_router, "_provider_llm", no_llm)
+    monkeypatch.setattr(timetable_ocr, "read_timetable_image", lambda data: OcrResult(
+        slots=[OcrSlot("월", "09:00", "10:15", "학", "학109", "자료구조"),
+               OcrSlot("목", "10:30", "11:45", "우주과학관", "우주과학관", None)],
+        notes=["토요일 칸은 흐려서 못 읽음"]))
     b = TestClient(app).post("/agent/timetable-image",
                              json={"university": EWHA, "image_base64": "aGVsbG8gd29ybGQ=", "mime_type": "image/png"}).json()
-    assert b["status"] == "ok" and len(b["slots"]) == 4 and b["notes"] == ["토요일 칸은 흐려서 못 읽음"]
-    s1, s2, s3, s4 = b["slots"]
-    assert s1["building"] == "공과대학" and s1["issue"] is None and s1["course"] == "자료구조"
-    assert s2["building"] == "ECC" and s2["issue"] is None  # 강의실 번호(B146)를 떼고 맞춤
-    assert s3["building"] is None and "우주과학관" in s3["issue"]
-    assert s4["issue"] == "종료 시각이 시작보다 빠름"
-    assert "공과대학" in b["buildings"] and "확인이 필요" in b["message"]
+    assert b["status"] == "ok" and len(b["slots"]) == 2
+    s1, s2 = b["slots"]
+    assert s1["building"] == "학관" and s1["issue"] is None and s1["course"] == "자료구조"
+    assert s2["building"] is None and s2["issue"]
 
 
 def test_llm_explain_can_be_turned_off(monkeypatch):
@@ -793,14 +830,51 @@ def _gold():
         "c39": X("smalltalk", unsupported=["심야 안전"]), "c40": X("smalltalk"),
         "c41": TurnExtraction(intent="policy", policy_query="월세 지원"),
         "c42": TurnExtraction(intent="policy", policy_query="전세 대출 이자"),
+        # 2026-11-15 기능별 예시 프롬프트
+        "c43": X("recommend", unsupported=["건물별 방문 횟수"], budget_manwon=80,
+                 department_buildings=["공과대학", "ECC"], priorities=["travel"]),
+        "c44": X("update", place_prefs=P("술집", "avoid", radius_m=150)),
+        "c45": X("update", place_prefs=P("편의점", "near", radius_m=200), area_min_m2=20),
+        "c46": X("update", priorities=["travel", "area"]),
+        "c47": X("analyze", analysis="excluded"),
+        "c48": TurnExtraction(intent="policy", policy_query="주거 지원", policy_kind="eligibility"),
+        "c49": TurnExtraction(intent="policy", policy_kind="compare", policy_names=["청년 월세 지원", "버팀목 전세자금대출"]),
+        "c50": TurnExtraction(intent="policy", policy_query="청년 월세 지원", policy_kind="apply"),
+        "c51": TurnExtraction(intent="policy", policy_kind="contract_safety"),
+        "c52": TurnExtraction(intent="policy", policy_query="청년 주거 지원", policy_regions=["서울", "서대문구"]),
     }
+
+
+def test_area_min_filter_and_excluded_reasons():
+    """'20㎡ 이상만' → 매물 정보 제외 조건(희망 면적은 그대로), '빠진 매물 이유' → 엔진 사유를 단계별로."""
+    from app.agent.graph import analysis_lines
+
+    c = TurnChat([X("recommend", **FULL), X("update", area_min_m2=20), X("analyze", analysis="excluded")])
+    s1 = c.say("추천")
+    s2 = c.say("면적은 20㎡ 이상인 매물만")
+    cur = s2["current_profile"]
+    assert cur["desired_area_m2"] == 18 and [e["source_text"] for e in cur["exclusions"]] == ["면적 20㎡ 이상"]
+    assert "바뀐 것: 제외 조건을 추가했어요" in s2["response"] and "상가정보" not in s2["response"]
+    rec = s2["last_recommendation"]
+    small = [pid for pid in s1["last_recommendation"]["ranks"]
+             if (p := data.get_property(pid)) and p.area_m2 is not None and p.area_m2 < 20]
+    assert small and not set(small) & set(rec["ranks"])  # 20㎡ 미만은 모두 빠짐
+    s3 = c.say("빠진 매물은 왜 빠졌어?")
+    an = s3["analysis"]
+    assert an["kind"] == "excluded"
+    stages = {x["stage"]: x for x in an["result"]["stages"]}
+    assert stages["exclusion"]["by_condition"] == {"면적 20㎡ 이상": len(small)}
+    assert an["result"]["ranked"] == rec["total_ranked"] and s3["current_profile"] == cur  # 분석은 조건을 안 바꿈
+    lines = "\n".join(analysis_lines(s3["analysis_facts"]))
+    assert "제외 조건" in lines and str(len(small)) in lines
 
 
 def test_eval_cases_file_is_valid():
     from app.agent.evaluate import load_cases
 
     keys = {"intent", "profile", "scenario", "unchanged", "includes", "first_priority", "timetable_len",
-            "property_rank", "analysis", "places", "place_rule", "no_places", "unsupported"}
+            "property_rank", "analysis", "places", "place_rule", "no_places", "unsupported",
+            "policy_kind", "policy_names_min", "policy_regions"}
     intents = {"recommend", "update", "what_if", "revert", "compare_previous", "analyze", "policy", "explain", "smalltalk"}
     cases = load_cases()
     assert len(cases) >= 40 and len({c["id"] for c in cases}) == len(cases)

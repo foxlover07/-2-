@@ -100,6 +100,61 @@ def test_exaone_concurrency_429_is_busy_but_real_quota_is_quota():
     assert llm.extract("추천", {}).intent == "recommend" and len(comp.calls) == 2  # 혼잡은 같은 모델로 다시 시도
 
 
+def test_token_and_credit_errors_switch_provider():
+    # 토큰·크레딧 소진 → quota (공급자를 자정까지 건너뜀), 입력 토큰 초과 → too_long (이번 호출만 전환). 2026-11-15 사용자 결정
+    from app.agent.llm import SWITCH_KINDS, classify_error
+
+    assert classify_error(Exception("Error code: 402 - insufficient credit")) == "quota"
+    assert classify_error(Exception("daily token limit reached")) == "quota"
+    assert classify_error(Exception("Error code: 400 - {'code': 'context_length_exceeded', "
+                                    "'message': 'maximum context length is 32768 tokens'}")) == "too_long"
+    assert classify_error(Exception("Error code: 400 - bad request")) == "other"  # 일반 400 은 전환 안 함
+    assert {"quota", "too_long"} <= SWITCH_KINDS
+    llm, comp = make_llm([Exception("maximum context length exceeded"), '{"intent": "recommend"}'], models=("a", "b"))
+    assert llm.extract("추천", {}).intent == "recommend" and [c["model"] for c in comp.calls] == ["a", "b"]
+
+
+def test_gemini_per_minute_429_is_busy_not_daily_quota():
+    """Gemini 는 분당 한도도 429 → 분 단위 표시면 busy(5분 미룸), 하루 단위 표시면 quota(자정까지). 2026-11-16"""
+    from app.agent.llm import classify_error
+
+    rpm = ("429 RESOURCE_EXHAUSTED. Quota exceeded for metric: generate_content_free_tier_requests, "
+           "quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier. Please retry in 23.4s.")
+    rpd = "429 RESOURCE_EXHAUSTED. quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier. Please retry in 5s."
+    assert classify_error(Exception(rpm)) == "busy"
+    assert classify_error(Exception(rpd)) == "quota"  # 하루 한도 표시가 있으면 재시도 문구가 있어도 quota
+    assert classify_error(Exception("429 RESOURCE_EXHAUSTED")) == "quota"  # 표시가 없으면 지금처럼 하루 한도
+
+
+def test_provider_chain_shares_one_time_budget():
+    """공급자를 바꿔도 전체 대기 시간은 chain_budget_s 하나. 시간이 모자라면 다음 공급자를 시도하지 않는다."""
+    from app.agent.llm import LLMError, ProviderChain
+
+    t = [0.0]
+
+    class Slow:
+        def __init__(self, cost, kind=None):
+            self.cost, self.kind, self.total_budget_s, self.seen, self.last_model = cost, kind, 45.0, [], "m"
+
+        def extract(self, *a):
+            self.seen.append(self.total_budget_s)
+            t[0] += self.cost
+            if self.kind:
+                raise LLMError("x", self.kind)
+            return "ok"
+
+    g, e = Slow(30, "busy"), Slow(10)
+    chain = ProviderChain([("gemini", g), ("exaone", e)], chain_budget_s=60, budget_clock=lambda: t[0])
+    assert chain.extract("m", {}) == "ok" and g.seen == [45.0] and e.seen == [30.0]  # 남은 30초만 줌
+    t[0] = 0.0
+    g2, e2 = Slow(55, "busy"), Slow(10)
+    chain2 = ProviderChain([("gemini", g2), ("exaone", e2)], chain_budget_s=60, budget_clock=lambda: t[0])
+    with pytest.raises(LLMError):
+        chain2.extract("m", {})
+    assert e2.seen == []  # 5초 남음 → EXAONE 은 시도하지 않음
+    assert chain.extract("m", {}) == "ok" and e.total_budget_s <= 45.0  # 원래 상한 기준으로 다시 계산
+
+
 def test_read_timetable_not_supported():
     llm, _ = make_llm([])
     with pytest.raises(LLMUnavailable):
@@ -123,11 +178,20 @@ def test_exaone_from_env_requires_key_url_model(monkeypatch):
     assert llm.models == ["m", "m2"] and llm.json_mode == "json_schema" and llm.reasoning_effort == "low"
 
 
-def test_llm_provider_default_exaone_and_gemini_option(monkeypatch):
+def test_llm_provider_default_gemini_then_exaone(monkeypatch):
+    """2026-11-16 결정: LLM_PROVIDER 없으면 Gemini 먼저, LLM_FALLBACK_PROVIDERS 없으면 EXAONE 이 대체."""
+    from app.agent.llm import ProviderChain
+
+    both = dict(GEMINI_API_KEY="k", GEMINI_MODEL="g",
+                EXAONE_API_KEY="k", EXAONE_BASE_URL="https://example.invalid/v1", EXAONE_MODEL="m")
+    _env(monkeypatch, **both)
+    chain = llm_from_env()
+    assert isinstance(chain, ProviderChain) and [n for n, _ in chain.providers] == ["gemini", "exaone"]
     _env(monkeypatch, EXAONE_API_KEY="k", EXAONE_BASE_URL="https://example.invalid/v1", EXAONE_MODEL="m")
-    assert isinstance(llm_from_env(), ExaoneLLM)  # LLM_PROVIDER 없으면 EXAONE
-    _env(monkeypatch, LLM_PROVIDER="gemini", GEMINI_API_KEY="k", GEMINI_MODEL="g")
-    assert isinstance(llm_from_env(), GeminiLLM)
+    only = llm_from_env()  # Gemini 설정이 없으면 EXAONE 만 남은 체인
+    assert [n for n, _ in only.providers] == ["exaone"] and isinstance(only.providers[0][1], ExaoneLLM)
+    _env(monkeypatch, LLM_PROVIDER="gemini", LLM_FALLBACK_PROVIDERS="", GEMINI_API_KEY="k", GEMINI_MODEL="g")
+    assert isinstance(llm_from_env(), GeminiLLM)  # 대체를 비워 두면 Gemini 하나만
     _env(monkeypatch, LLM_PROVIDER="foo")
     with pytest.raises(LLMUnavailable):
         llm_from_env()

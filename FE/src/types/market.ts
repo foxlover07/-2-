@@ -1,3 +1,4 @@
+import type { PolicyItem } from './agent'
 // BE GET /market/compare/{id}, /market/amenities/{id} 응답 (BE/app/market.py, app/amenities.py 와 1:1).
 // 추천 점수에는 쓰지 않는 참고 정보다.
 
@@ -79,4 +80,34 @@ export interface BuildingInfo {
   source: string
   fetched_at: string | null
   notes: string[]
+}
+
+// 계약 전 확인 (BE app/policy.ContractCheck). 일반 점검 항목 + 이 매물의 사실. 판정하지 않는다.
+export interface ContractCheckItem {
+  key: string | null
+  text: string
+  link: { name: string; url: string } | null
+  fact: string | null // 서비스가 이 매물에 대해 가진 사실. null = 붙일 데이터 없음
+}
+
+export interface ContractCheck {
+  property_id: string
+  phases: Array<{ phase: string; items: ContractCheckItem[] }>
+  source: string
+  notes: string[]
+}
+
+// 매물과 관련된 공식 정책 (BE app/policy.RelatedPolicies). 임대 형태·지역으로 고른 안내. 자격 판정 없음.
+export interface RelatedPolicies {
+  property_id: string
+  rent_kind: '월세' | '전세' | null
+  regions: string[]
+  available: boolean
+  items: PolicyItem[]
+  reason: string | null
+  source: string
+  fetched_at: string | null
+  notes: string[]
+  official_links: Array<{ name: string; url: string }>
+  disclaimer: string
 }

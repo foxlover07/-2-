@@ -28,7 +28,7 @@ from langgraph.types import Command, interrupt
 
 from app.agent import tools
 from app.agent.llm import AgentLLM, LLMError, LLMUnavailable, profile_context
-from app.agent.schemas import AgentProfile, AnalysisOut, Comparison, RecSummary, TurnExtraction
+from app.agent.schemas import AgentProfile, AnalysisOut, Comparison, ProfileChanges, RecSummary, TurnExtraction
 from app.agent.spec import capability_spec
 from app.config import _read
 from app.data import load_properties
@@ -38,6 +38,7 @@ MAX_MESSAGES = 20
 LLM_ERROR_TEXT = {
     "busy": "AI 서버가 지금 혼잡해 응답을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.",
     "quota": "AI 사용 한도를 넘어 지금은 답할 수 없습니다. 한도가 풀린 뒤 다시 시도해 주세요.",
+    "too_long": "대화나 메시지가 너무 길어 AI 가 처리하지 못했습니다. 메시지를 짧게 나눠 보내 주세요.",
     "auth": "AI 서버 인증에 실패했습니다 (서버의 LLM 키 확인 필요).",
     "not_found": "설정된 AI 모델을 쓸 수 없습니다 (서버의 LLM 모델 설정 확인 필요).",
     "bad_response": "AI 응답 형식이 올바르지 않아 조건을 읽지 못했습니다. 조금 다르게 말해 주세요.",
@@ -57,6 +58,7 @@ class AgentState(TypedDict, total=False):
     # 이번 턴
     user_message: str
     fe_profile: dict[str, Any] | None
+    chat_mode: str | None                  # FE 모드 배너: recommend | policy | None(자동 판별)
     intent: str | None
     extraction: dict[str, Any] | None
     notes: list[str]
@@ -152,6 +154,9 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         except LLMError as e:
             out.update(status="llm_error", notes=[str(e)], llm_error_kind=getattr(e, "kind", "other"))
             return out
+        ex, guide = apply_chat_mode(ex, state.get("chat_mode"))
+        if guide:
+            out["blocked"] = guide
         out.update(intent=ex.intent, extraction=_dump(ex))
         return out
 
@@ -243,7 +248,7 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
             base = None
         else:
             last = state.get("last_recommendation")
-            same = last and last.get("request") == tools.to_request(current).model_dump(mode="json")
+            same = last and last.get("request") == tools.request_key(current)
             base = RecSummary.model_validate(last) if same else tools.run_recommendation(current)
             if not same:
                 out["last_recommendation"] = _dump(base)
@@ -262,7 +267,7 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         current = _profile(state["current_profile"])
         out: AgentState = {}
         last = state.get("last_recommendation")
-        same = last and last.get("request") == tools.to_request(current).model_dump(mode="json")
+        same = last and last.get("request") == tools.request_key(current)
         rec = RecSummary.model_validate(last) if same else tools.run_recommendation(current)
         if not same:
             out["last_recommendation"] = _dump(rec)
@@ -272,10 +277,17 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
 
     def policy(state: AgentState) -> AgentState:
         """주거 지원 정책 안내 (공식 데이터 검색만, 자격 판정 없음). 프로필 필수 조건을 묻지 않는다."""
-        from app.policy import search_policies
+        from app.policy import compare_policies, contract_checklist, search_policies
 
         ex = TurnExtraction.model_validate(state["extraction"])
-        res = search_policies(ex.policy_query or state["user_message"])
+        kind = ex.policy_kind or "info"
+        if kind == "contract_safety":
+            res = contract_checklist()
+        elif kind == "compare" and len(ex.policy_names) >= 2:
+            res = compare_policies(ex.policy_names)
+        else:
+            res = search_policies(ex.policy_query or state["user_message"], regions=ex.policy_regions,
+                                  kind="info" if kind == "compare" else kind)
         return {"policy": res.model_dump(mode="json")}
 
     def compare_previous(state: AgentState) -> AgentState:
@@ -313,6 +325,9 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
             text, source = fallback_text(facts), "template_question"
         elif not llm_explain_enabled():
             text, source = fallback_text(facts), "template"
+        elif _policy_without_data(state):
+            # 정책 데이터가 없을 때 LLM 이 '일시적 지연' 처럼 원인을 바꿔 말하지 않게 고정 문장으로 답한다
+            text, source = fallback_text(facts), "template_no_policy_data"
         else:
             try:
                 llm = explain_llm(get_llm)
@@ -340,6 +355,21 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
 
 
 # ---------------------------------------------------------------- 분기
+
+MODE_GUIDE_POLICY = ("주거 지원 정책·계약 질문은 챗봇 위쪽 배너에서 '정책 안내' 모드로 바꾼 뒤 물어봐 주세요. "
+                     "'매물 추천' 모드에서는 매물 추천·조건 변경·분석만 다룹니다.")
+
+
+def apply_chat_mode(ex: TurnExtraction, mode: str | None) -> tuple[TurnExtraction, str | None]:
+    """FE 모드 배너에 맞춰 의도를 고정한다. mode 가 없으면 LLM 판별 그대로 (기존 동작).
+    - policy: 인사(smalltalk) 외에는 모두 정책 안내로 보내고, 프로필 조건은 바꾸지 않는다.
+    - recommend: 정책 질문이면 정책 검색을 하지 않고 모드 전환을 안내한다."""
+    if mode == "policy" and ex.intent not in ("policy", "smalltalk"):
+        return ex.model_copy(update={"intent": "policy", "changes": ProfileChanges()}), None
+    if mode == "recommend" and ex.intent == "policy":
+        return ex.model_copy(update={"intent": "smalltalk"}), MODE_GUIDE_POLICY
+    return ex, None
+
 
 def route_after_update(state: AgentState) -> str:
     if state.get("status") != "ok":
@@ -434,11 +464,13 @@ def _rec_facts(rec: dict[str, Any] | None) -> dict[str, Any] | None:
                 "over_budget": t["over_budget"],
                 "walk_min_to_building": t.get("walk_min", {}),
                 "same_house_ads_hidden": len(t.get("same_house_ids", [])),
+                **({"walk_min_to_frequent_place": t["frequent_walk_min"]} if t.get("frequent_walk_min") else {}),
             }
             for t in rec["top"]
         ],
         "engine_notes": rec["notes"],
         "excluded_by_place_condition": rec.get("exclusion_counts", {}),
+        **({"frequent_places": rec["frequent"]} if rec.get("frequent") else {}),
     }
 
 
@@ -529,7 +561,9 @@ def fallback_text(facts: dict[str, Any]) -> str:
                          + (" (예산 초과)" if t["over_budget"] else "")
                          + f" · 보증금 {_fmt(t['deposit_manwon'])}만 원 · 통학 편도 {_fmt(t['travel_min_one_way'])}분"
                          f" · 면적 {_fmt(t['area_m2'])}㎡ · 점수 {_fmt(t['score'])}"
-                         + (f" · 같은 집일 수 있는 광고 {t['same_house_ads_hidden']}건 더" if t.get("same_house_ads_hidden") else ""))
+                         + (f" · 같은 집일 수 있는 광고 {t['same_house_ads_hidden']}건 더" if t.get("same_house_ads_hidden") else "")
+                         + "".join(f" · {k}까지 도보 {'미확인' if v is None else _fmt(v) + '분'}"
+                                   for k, v in (t.get("walk_min_to_frequent_place") or {}).items()))
     an = facts.get("analysis")
     if an and st == "ok":
         lines.extend(analysis_lines(an))
@@ -556,33 +590,70 @@ def fallback_text(facts: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _policy_without_data(state: AgentState) -> bool:
+    pol = state.get("policy")
+    return bool(pol) and pol.get("kind") != "contract_safety" and not pol.get("available")
+
+
 def _policy_facts(pol: dict[str, Any] | None) -> dict[str, Any] | None:
     if not pol:
         return None
     return {
         "available": pol["available"], "reason": pol.get("reason"), "query": pol["query"],
+        "kind": pol.get("kind", "info"), "regions": pol.get("regions", []),
         "total_matched": pol.get("total_matched", 0),
         "items": [{k: it.get(k) for k in ("name", "summary", "support", "subcategory", "agency", "region", "target_age",
-                                           "apply_period", "apply_url", "ref_url", "updated_at")} for it in pol["items"]],
+                                           "income_text", "apply_period", "apply_method", "documents", "screening",
+                                           "apply_url", "ref_url", "updated_at", "fetched_at", "status_note")}
+                  for it in pol["items"]],
+        "missing_names": pol.get("missing_names", []), "notes": pol.get("notes", []),
+        "checklist": pol.get("checklist", []), "checklist_source": pol.get("checklist_source"),
         "source": pol["source"], "fetched_at": pol.get("fetched_at"), "official_links": pol["official_links"],
         "disclaimer": pol["disclaimer"],
     }
 
 
+def _clip(text: str, n: int) -> str:
+    """길면 n 자 안의 마지막 문장 끝에서 자른다 (문장 중간에서 끊겨 뜻이 바뀌지 않게)."""
+    if len(text) <= n:
+        return text
+    cut = text.rfind(". ", 0, n)
+    return (text[:cut + 1] if cut > n // 3 else text[:n].rstrip()) + " (자세한 내용은 공식 페이지)"
+
+
 def policy_lines(pol: dict[str, Any]) -> list[str]:
     """정책 사실 → 문장 (LLM 없이). 자격을 판정하지 않는다."""
     links = ", ".join(f"{l['name']} {l['url']}" for l in pol["official_links"])
+    kind = pol.get("kind", "info")
+    notes = list(pol.get("notes", []))
+    if kind == "contract_safety":
+        out = ["집 계약 때 단계별로 확인할 것들이에요."]
+        for sec in pol.get("checklist", []):
+            out.append(f"[{sec['phase']}]")
+            for it in sec["items"]:
+                out.append(f"- {it['text']}" + (f" ({it['link']['name']} {it['link']['url']})" if it.get("link") else ""))
+        return [*out, *notes, pol.get("checklist_source") or pol["disclaimer"]]
     if not pol["available"]:
-        return [pol.get("reason") or "정책 데이터가 없습니다.", f"공식 사이트: {links}"]
+        return [*notes, pol.get("reason") or "정책 데이터가 없습니다.", f"공식 사이트: {links}"]
     if not pol["items"]:
-        return [f"'{pol['query']}'와 관련된 주거 정책을 찾지 못했습니다.", f"공식 사이트: {links}"]
-    out = [f"'{pol['query']}' 관련 주거 정책 {len(pol['items'])}개입니다 (출처: {pol['source']}"
+        return [*notes, f"'{pol['query']}'와 관련된 주거 정책을 찾지 못했습니다.", f"공식 사이트: {links}"]
+    out = [*notes[:1], f"'{pol['query']}' 관련 주거 정책 {len(pol['items'])}개입니다 (출처: {pol['source']}"
            + (f", 기준 {pol['fetched_at'][:10]})" if pol.get("fetched_at") else ")")]
     for it in pol["items"]:
-        bits = [x for x in (it.get("agency"), it.get("region"), f"신청 {it['apply_period']}" if it.get("apply_period") else None) if x]
+        bits = [x for x in (it.get("agency"), it.get("region"),
+                            f"연령 {it['target_age']} (공고 기준)" if it.get("target_age") else None,
+                            f"신청 {it['apply_period']}" if it.get("apply_period") else None) if x]
         out.append(f"- {it['name']}" + (f" ({' · '.join(bits)})" if bits else "")
-                   + (f": {it['support'] or it['summary']}"[:160] if (it.get("support") or it.get("summary")) else "")
+                   + (f": {_clip(it['support'] or it['summary'], 240)}" if (it.get("support") or it.get("summary")) else "")
                    + (f" {it['apply_url'] or it['ref_url']}" if (it.get("apply_url") or it.get("ref_url")) else ""))
+        if it.get("status_note"):
+            out.append(f"  · 참고: {_clip(it['status_note'], 200)}")
+        if kind == "eligibility" and it.get("income_text"):
+            out.append(f"  · 소득 조건 (공고 표기): {_clip(it['income_text'], 240)}")
+        if kind == "apply":
+            for label, key in (("신청 방법", "apply_method"), ("제출 서류", "documents"), ("심사·발표", "screening")):
+                out.append(f"  · {label}: {(it.get(key) or '공식 데이터에 표기 없음 → 공식 페이지 확인')[:200]}")
+    out.extend(notes[1:])
     out.append(pol["disclaimer"])
     return out
 
@@ -636,6 +707,17 @@ def analysis_lines(an: dict[str, Any]) -> list[str]:
                        f"사용승인 {an.get('use_approval_date') or '정보 없음'}, 지상 {_fmt(an.get('floors_above'))}층, "
                        f"승강기 {_fmt(an.get('elevators'))}대, 주차 {_fmt(an.get('parking'))}대")
         out.extend(an.get("notes", []))
+    elif k == "excluded":
+        out.append(f"전체 {an['total']}개 중 {an['ranked']}개가 조건을 통과했고 {an['excluded_count']}개가 빠졌습니다.")
+        for s in an["stages"]:
+            sub = f" ({', '.join(f'{c} {n}개' for c, n in s['by_condition'].items())})" if s["by_condition"] else ""
+            out.append(f"- {s['label']}: {s['count']}개{sub}")
+            for ex in s["examples"]:
+                out.append(f"  · {ex['address'] or ex['property_id']}: {ex['reason']}")
+        if an["not_recommended"]:
+            out.append("조건은 통과했지만 지금 우선순위에서 순위가 밀린 매물:")
+            for n in an["not_recommended"]:
+                out.append(f"- {n['address'] or n['property_id']} (다른 우선순위에서는 {n['best_rank_elsewhere']}위): {n['message']}")
     elif k == "amenities":
         if not an["available"]:
             out.append(an.get("reason") or "정보가 없습니다.")
@@ -706,18 +788,20 @@ def apply_exclusions_now(current: AgentProfile, new: AgentProfile, added: list) 
     필수 조건이 아직 없어 추천을 돌릴 수 없으면 개수 없이 적용만 알린다.
     """
     without = new.model_copy(update={"exclusions": [e for e in new.exclusions if e not in added]})
-    lines = ["바뀐 것: 장소 제외 조건을 추가했어요.", *tools.exclusion_lines(added)]
+    places = any(c.uses_places for e in added for c in e.conditions)
+    lines = [f"바뀐 것: {'장소 ' if places else ''}제외 조건을 추가했어요.", *tools.exclusion_lines(added)]
     if not tools.missing_fields(new) and tools.university_listing_count(new.university):
         before = tools.run_recommendation(without)
         after = tools.run_recommendation(new)
         if after.total_ranked == 0 and before.total_ranked > 0:
             return without, "\n".join([
-                "이 장소 조건을 적용하면 남는 매물이 없어서 아직 적용하지 않았어요.", *tools.exclusion_lines(added),
+                f"이 {'장소 ' if places else ''}조건을 적용하면 남는 매물이 없어서 아직 적용하지 않았어요.", *tools.exclusion_lines(added),
                 "거리나 개수 기준을 바꾸거나 다른 조건을 풀어 볼까요?"])
         lines.append(f"→ {before.total_ranked}개 중 {before.total_ranked - after.total_ranked}개가 빠지고 "
                      f"{after.total_ranked}개가 남았어요.")
-    lines.append("상가정보(소상공인시장진흥공단) 등록 업소 기준, 직선거리예요. "
-                 "조건을 빼려면 \"○○ 조건 빼 줘\"라고 하거나 비교 화면의 장소 조건 칩에서 지우면 돼요.")
+    if places:
+        lines.append("상가정보(소상공인시장진흥공단) 등록 업소 기준, 직선거리예요.")
+    lines.append("조건을 빼려면 \"○○ 조건 빼 줘\"라고 하거나 비교 화면의 장소 조건 칩에서 지우면 돼요.")
     return new, "\n".join(lines)
 
 
@@ -759,7 +843,8 @@ def yes_no(message: str) -> bool | None:
     return None
 
 
-def run_turn(graph: Any, session_id: str, message: str, fe_profile: dict[str, Any] | None) -> AgentState:
+def run_turn(graph: Any, session_id: str, message: str, fe_profile: dict[str, Any] | None,
+             mode: str | None = None) -> AgentState:
     """한 턴 실행. 확인 질문을 기다리는 중이면 답(네/아니요)으로 이어서 실행하고,
     답이 아니면 변경을 취소한 뒤 새 메시지로 처리한다."""
     cfg = {"configurable": {"thread_id": session_id}}
@@ -769,7 +854,8 @@ def run_turn(graph: Any, session_id: str, message: str, fe_profile: dict[str, An
         if ans is not None:
             return graph.invoke(Command(resume=ans), config=cfg)
         graph.invoke(Command(resume=False), config=cfg)
-    return graph.invoke({"user_message": message, "session_id": session_id, "fe_profile": fe_profile}, config=cfg)
+    return graph.invoke({"user_message": message, "session_id": session_id, "fe_profile": fe_profile,
+                         "chat_mode": mode}, config=cfg)
 
 
 def to_response_parts(state: AgentState) -> dict[str, Any]:

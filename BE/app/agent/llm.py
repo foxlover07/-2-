@@ -1,6 +1,7 @@
-"""LLM 연결: LG EXAONE (OpenAI 호환 API, 기본) · Gemini (langchain-google-genai) · 테스트용 가짜 LLM.
+"""LLM 연결: Gemini (langchain-google-genai, 기본) · LG EXAONE (OpenAI 호환 API, 대체) · 테스트용 가짜 LLM.
 
-- 어느 LLM 을 쓸지는 LLM_PROVIDER (exaone 기본 | gemini). 2026-11-15 사용자 결정: Gemini 대신 EXAONE.
+- 어느 LLM 을 쓸지는 LLM_PROVIDER (gemini 기본 | exaone) + LLM_FALLBACK_PROVIDERS (비우면 exaone).
+  2026-11-16 사용자 결정: Gemini 먼저, 한도·혼잡·토큰 문제면 EXAONE 으로 전환 (11-15 의 EXAONE 우선을 뒤집음).
 - 키·주소·모델은 서버 환경 변수만 쓴다 (BE/.env.local). 키는 로그·응답·예외에 넣지 않는다.
   · EXAONE: EXAONE_API_KEY, EXAONE_BASE_URL, EXAONE_MODEL (+ EXAONE_FALLBACK_MODELS, EXAONE_REASONING_EFFORT, EXAONE_JSON_MODE)
   · Gemini: GEMINI_API_KEY, GEMINI_MODEL (+ GEMINI_FALLBACK_MODELS)
@@ -28,8 +29,10 @@ TIMEOUT_S = 20          # 호출 한 번의 제한 시간
 RETRIES = 2             # 같은 모델에서 다시 해 보는 횟수 (혼잡·시간 초과일 때만)
 BACKOFF_S = 1.5         # 재시도 간격: 1.5초, 3초, …
 TOTAL_BUDGET_S = 45     # 한 번의 extract/explain 이 쓰는 전체 시간 상한 (사용자가 기다리는 시간)
+CHAIN_BUDGET_S = 60     # 공급자를 바꿔 가며 부를 때(Gemini → EXAONE)의 전체 시간 상한
+MIN_PROVIDER_BUDGET_S = 8  # 남은 시간이 이보다 적으면 다음 공급자를 시도하지 않는다
 
-ErrorKind = Literal["busy", "quota", "auth", "not_found", "bad_response", "other"]
+ErrorKind = Literal["busy", "quota", "too_long", "auth", "not_found", "bad_response", "other"]
 
 
 class LLMUnavailable(RuntimeError):
@@ -47,6 +50,22 @@ class LLMError(RuntimeError):
 def classify_error(e: BaseException) -> ErrorKind:
     """Gemini 예외 → 종류. 상태 코드·상태 이름 문자열로 판단한다 (SDK 예외 클래스가 버전마다 달라서)."""
     s = f"{type(e).__name__} {e}"
+    # 입력 토큰이 모델 한도를 넘음 → 이 호출만 다음 모델·공급자로 (하루 한도와 다름)
+    low = s.lower()
+    if any(k in low for k in ("context_length_exceeded", "maximum context length", "context window",
+                              "prompt is too long", "input is too long", "too many tokens")):
+        return "too_long"
+    # 토큰·크레딧 소진 (429 가 아닌 형태로 오는 경우 포함) → 하루 한도로 취급해 다른 공급자로 (2026-11-15 사용자 결정)
+    # Gemini 는 분당 요청·토큰 한도를 넘어도 429 RESOURCE_EXHAUSTED 를 준다 (2026-11-16). 하루 한도 표시가 없고
+    # 분 단위 한도·재시도 대기 표시가 있으면 '혼잡'으로 보고 잠깐만 미룬다 (자정까지 건너뛰지 않게).
+    per_day = any(k in low for k in ("perday", "per day", "per_day", "daily"))
+    if not per_day and any(k in low for k in ("perminute", "per minute", "per_minute", "retry in", "retrydelay",
+                                              "retry_delay")):
+        return "busy"
+    if any(k in low for k in ("402", "insufficient_quota", "insufficient quota", "insufficient credit",
+                              "insufficient balance", "out of credit", "token limit", "tokens per day",
+                              "tokens_per_day", "daily limit")):
+        return "quota"
     # EXAONE 은 서버 혼잡도 429 로 준다: "service is busy, too many concurrent requests" → 한도가 아니라 혼잡 (2026-11-15 확인)
     if any(k in s for k in ("503", "UNAVAILABLE", "504", "DEADLINE_EXCEEDED", "high demand", "Timeout", "timed out",
                             "service is busy", "too many concurrent")):
@@ -83,7 +102,20 @@ EXTRACT_SYSTEM = f"""너는 대학생 자취방 추천 서비스의 조건 추�
   "편의점이 300m 안에 있었으면" → {{place: "편의점", want: "near", radius_m: 300}}, "노래방 2곳까지는 괜찮아" → max_count 2.
   장소 이름은 사용자 표현 그대로 (도서관·카페처럼 서버가 확인할 수 없는 장소도 그대로 넣는다 — 서버가 안내한다).
   "술집 조건 빼 줘" → remove_exclusions ["술집"], 장소 조건 전부 해제 → ["*"]. 의도는 update (가정이면 what_if).
-- 지금 계산할 수 없는 요청(알바 위치, 심야 안전, 오르막, 조용함, 생활 리듬 등)은 unsupported 에 짧게 적는다.
+  "주변 150m 안에 술집이 많은 매물은 빼 줘" → {{place: "술집", want: "avoid", radius_m: 150}} (개수를 말하지 않으면 max_count null).
+  "걸어서 3분(200m)" 처럼 거리를 같이 말하면 그 m 값을 radius_m 에.
+- "면적 20㎡ 이상만", "20㎡ 넘는 것만" 처럼 꼭 지켜야 하는 최소 면적은 area_min_m2 (필터). "18㎡ 정도면 좋겠어" 같은 희망은 desired_area_m2.
+- 건물별 주 몇 번("공대 주 4번, ECC 주 2번")은 건물 이름만 department_buildings 에 담고,
+  unsupported 에 "건물별 방문 횟수(시간표를 입력하면 요일별로 반영)" 를 넣는다 (횟수를 저장할 칸이 없다).
+  "걷는 시간이 제일 짧은 매물" → priorities 1순위 travel.
+- 자주 가는 곳(알바·헬스장·학원·자주 가는 역·가게 등, 거기까지 걷는 시간을 고려해 달라는 뜻)은 frequent_places 에 담는다.
+  query 는 검색할 장소 이름 부분만, name 은 사용자 표현, visits_per_week 는 주 몇 번 (말하지 않으면 1).
+  "알바하는 곳이 신촌역 근처라 주 3번 가" → {{query: "신촌역", name: "알바(신촌역 근처)", visits_per_week: 3}}.
+  "이대역 앞 스타벅스에 매일 가" → {{query: "이대역 스타벅스", name: "스타벅스(이대역 앞)", visits_per_week: 7}}.
+  장소 이름 없이 "알바하는 곳"만 말하면 frequent_places 에 넣지 말고 unsupported 에 "자주 가는 곳 이름 필요" 를 넣는다.
+  "알바 장소 빼 줘" → remove_frequent_places ["알바"], 전부 지우면 ["*"]. 장소 기호(place_prefs: 술집 근처 싫어 등)와 다르다.
+  강의 건물(공대·ECC 등)은 자주 가는 곳이 아니라 department_buildings 다.
+- 지금 계산할 수 없는 요청(심야 안전, 오르막, 조용함, 생활 리듬 등)은 unsupported 에 짧게 적는다.
 - 맥락의 service_spec 은 서비스가 실제로 할 수 있는 일이다. 건물 이름·대학은 그 안에서 고르고, 비중 숫자(예: '통학 70%')는 정할 수 없으니 순서로만 반영한다.
 
 의도(intent)
@@ -100,8 +132,14 @@ EXTRACT_SYSTEM = f"""너는 대학생 자취방 추천 서비스의 조건 추�
   · market: "1위 월세 비싼 편이야?", "주변 시세랑 비교", "실거래가"
   · amenities: "근처에 편의점/마트/세탁소/약국 있어?", "주변 편의시설"
   · building: "몇 년 된 건물이야?", "엘리베이터 있어?", "주차 돼?", "건축물대장", "근생이야?"
-- policy: 주거 지원 정책을 물을 때 ("청년 월세 지원 있어?", "전세 대출 정책 알려 줘", "기숙사 지원"). policy_query 에 찾을 낱말.
-  "나도 받을 수 있어?" 같은 자격 질문도 policy 로 둔다 (서비스는 자격을 판정하지 않고 공식 사이트로 안내한다).
+  · excluded: "추천에서 빠진 매물은 왜 빠졌어?", "제외된 매물 이유", "비추천 이유"
+- policy: 주거 지원 정책·계약 안전을 물을 때. policy_query 에 찾을 낱말, policy_kind 에 질문 종류.
+  · info: "청년 월세 지원 있어?", "기숙사 지원"
+  · eligibility: "내가 받을 수 있는 정책 알려 줘", "나도 대상이야?" (서비스는 자격을 판정하지 않는다. 나이·소득은 changes 에 넣지 않는다)
+  · compare: "A랑 B 중 뭐가 더 유리해?" → policy_names 에 정책 이름들 ["청년 월세 지원", "버팀목 전세자금대출"]
+  · apply: "신청하려면 서류·신청하는 곳·순서"
+  · contract_safety: "전세사기 안 당하려면 뭘 확인해?", "계약 전에 확인할 것"
+  지역을 말하면 policy_regions 에 큰 단위부터 ("서울 서대문구" → ["서울", "서대문구"]).
 - explain: 지난 추천 결과나 특정 매물 설명 ("2등 매물은 왜?") → property_rank
 - smalltalk: 그 밖의 대화
 """
@@ -115,6 +153,10 @@ EXPLAIN_SYSTEM = """너는 대학생 자취방 추천 결과를 설명하는 도
   자격을 판정하지 않는다: "대상입니다/받을 수 있습니다/해당됩니다" 같은 말을 쓰지 않고, 연령 등 조건은 '공고 기준'으로만 전한다.
   지원 금액을 유지비·추천 순위와 합쳐 계산하지 않는다. 마지막에 disclaimer 와 공식 사이트를 안내한다.
   policy.available 이 false 면 정책 내용을 만들지 말고 reason 과 공식 사이트만 안내한다.
+  policy.notes 는 빠뜨리지 않는다. kind=compare 면 어느 쪽이 유리한지 말하지 않고 항목별로 나란히 전한다.
+  kind=apply 면 apply_method·documents·screening 을 표기 그대로 전하고, 없으면 공식 페이지 확인을 안내한다.
+  kind=contract_safety 면 checklist 의 단계·항목·링크만 전한다 (항목을 더하지 않는다). 안전을 보장한다고 말하지 않는다.
+- analysis.kind=excluded 면 단계별 빠진 수·사유 예시와 not_recommended 의 message 를 그대로 전한다 (사유를 새로 만들지 않는다).
 - monthly_cost_manwon 은 '유지비(월세+관리비)'다. '월세'라고 부르지 않는다. travel_min_one_way 는 '통학 편도(도보) 분'이다.
 - 광고 매물이므로 입주 가능하다고 단정하지 않는다. 안전하다고 단정하지 않는다.
 - notes·limitations 에 있는 계산 불가 항목과 한계를 빠뜨리지 않는다.
@@ -213,7 +255,7 @@ class _FallbackLLM:
                     if last == "busy" and attempt < self.retries:
                         self._sleep(self.backoff_s * 2 ** attempt)
                         continue
-                    if last in ("busy", "not_found", "quota"):
+                    if last in ("busy", "not_found", "quota", "too_long"):
                         break  # 다음 모델 (한도는 모델마다 따로라 다른 모델은 될 수 있다)
                     raise LLMError(f"{self.provider} {what} 실패 ({last})", last) from e
         raise LLMError(f"{self.provider} {what} 실패 ({last}, 모델 {len(self.models)}개 모두)", last)
@@ -402,7 +444,7 @@ def exaone_from_env() -> ExaoneLLM:
 _FACTORIES: dict[str, Callable[[], Any]] = {}  # 아래에서 채운다 (이름 → *_from_env)
 
 # 공급자를 바꿔 다시 할 오류. 응답 형식 오류(bad_response)·기타는 바꾸지 않는다 (다른 모델도 같을 가능성, 호출만 늘어남).
-SWITCH_KINDS = {"quota", "busy", "not_found", "auth"}
+SWITCH_KINDS = {"quota", "busy", "too_long", "not_found", "auth"}
 # 혼잡(busy)으로 실패한 공급자는 이 시간 동안 건너뛴다 (매 메시지마다 50초씩 기다리지 않게). LLM_BUSY_COOLDOWN_S 로 바꾼다
 BUSY_COOLDOWN_S = 300.0
 
@@ -413,24 +455,29 @@ def _next_midnight(now: float) -> float:
 
 
 class ProviderChain:
-    """주 공급자 → 대체 공급자 순서로 부른다 (LLM_PROVIDER + LLM_FALLBACK_PROVIDERS, 2026-11-15 사용자 결정).
+    """주 공급자 → 대체 공급자 순서로 부른다 (LLM_PROVIDER + LLM_FALLBACK_PROVIDERS, 2026-11-16 기준 gemini → exaone).
 
     - 하루 한도(quota): 그 공급자를 오늘 자정(서버 현지 시각)까지 건너뛴다.
     - 혼잡(busy): 다음 공급자로 넘기고 그 공급자는 busy_cooldown_s(기본 5분) 동안 뒤로 미룬다
       (매 메시지마다 혼잡한 공급자를 50초씩 기다리지 않게). 다른 공급자가 모두 안 되면 미뤄 둔 공급자도 시도한다.
-    - 모델 없음·인증 오류: 이번 호출만 다음 공급자로.
+    - 토큰·크레딧 소진(402·token limit 등)도 하루 한도와 같이 처리한다.
+    - 입력 토큰 초과(too_long)·모델 없음·인증 오류: 이번 호출만 다음 공급자로.
     - 응답 형식 오류 등: 바꾸지 않고 그대로 실패.
     - 시간표 사진(read_timetable)은 주 공급자에만 묻는다 → EXAONE 이면 LLMUnavailable → OCR (이미지를 외부로 보내지 않음).
     - last_model 은 '공급자:모델' (턴 기록용).
     """
 
     def __init__(self, providers: list[tuple[str, Any]], clock: Callable[[], float] = time.time,
-                 busy_cooldown_s: float = BUSY_COOLDOWN_S):
+                 busy_cooldown_s: float = BUSY_COOLDOWN_S, chain_budget_s: float = CHAIN_BUDGET_S,
+                 budget_clock: Callable[[], float] = time.monotonic):
         if not providers:
             raise LLMUnavailable("쓸 수 있는 LLM 공급자가 없습니다 (키·모델 설정 확인).")
         self.providers = providers
         self.clock = clock
         self.busy_cooldown_s = busy_cooldown_s
+        self.chain_budget_s = chain_budget_s
+        self.budget_clock = budget_clock
+        self._own_budget: dict[str, float | None] = {}
         self.exhausted_until: dict[str, float] = {}   # 하루 한도 → 자정까지
         self.busy_until: dict[str, float] = {}        # 혼잡 → 잠시 뒤로
         self.last_model: str | None = None
@@ -447,7 +494,15 @@ class ProviderChain:
         if not order:
             raise LLMError("모든 LLM 공급자가 오늘 사용 한도를 넘었습니다.", "quota")
         last: LLMError | None = None
+        deadline = self.budget_clock() + self.chain_budget_s
         for name, llm in order:
+            remaining = deadline - self.budget_clock()
+            if last is not None and remaining < MIN_PROVIDER_BUDGET_S:
+                break  # 앞 공급자가 시간을 다 써서 다음 공급자를 시도할 시간이 없음
+            # 공급자를 바꿔도 사용자가 기다리는 전체 시간은 chain_budget_s 하나로 묶는다
+            own = self._own_budget.setdefault(name, getattr(llm, "total_budget_s", None))  # 공급자 원래 상한
+            if own is not None:
+                llm.total_budget_s = min(own, remaining)
             try:
                 out = getattr(llm, method)(*args)
             except LLMError as e:
@@ -477,12 +532,15 @@ class ProviderChain:
 
 
 def llm_from_env() -> AgentLLM:
-    """LLM_PROVIDER (exaone 기본 | gemini) + LLM_FALLBACK_PROVIDERS (쉼표, 선택) → 공급자 순서대로 쓰는 LLM.
+    """LLM_PROVIDER (gemini 기본 | exaone) + LLM_FALLBACK_PROVIDERS (쉼표, 비우면 exaone) → 공급자 순서대로 쓰는 LLM.
 
+    2026-11-16 사용자 결정: Gemini 먼저, 한도·혼잡·토큰 문제면 EXAONE.
     대체 공급자의 키·모델이 없으면 그 공급자는 빼고 쓴다. 주 공급자 설정이 없어도 대체 공급자가 있으면 그것만 쓴다.
     """
-    primary = (_read("LLM_PROVIDER") or "exaone").strip().lower()
-    names = [primary] + [x.strip().lower() for x in (_read("LLM_FALLBACK_PROVIDERS") or "").split(",") if x.strip()]
+    primary = (_read("LLM_PROVIDER") or "gemini").strip().lower()
+    fallback = _read("LLM_FALLBACK_PROVIDERS")
+    fallback = "exaone" if fallback is None else fallback
+    names = [primary] + [x.strip().lower() for x in fallback.split(",") if x.strip()]
     names = list(dict.fromkeys(names))
     unknown = [n for n in names if n not in _FACTORIES]
     if unknown:
