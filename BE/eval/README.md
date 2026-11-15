@@ -5,9 +5,14 @@
 
 | 파일 | 층 | 개수 | 평가용 |
 |---|---|---|---|
-| `cases/l2_extract.jsonl` | L2 조건 추출 (말 → 의도·생활 프로필) | 53 | 13 |
-| `cases/l3_plan.jsonl` | L3 제외 계획 (말 → 확인 계획) | 30 | 8 |
-| `cases/l4_dialog.jsonl` | L4 대화 (여러 턴, 답 문장까지) | 19 (24턴) | 5 |
+| `cases/l2_extract.jsonl` | L2 조건 추출 (말 → 의도·생활 프로필) | 41 | 10 |
+| `cases/l3_plan.jsonl` | L3 제외 계획 (말 → 확인 계획) | 25 | 7 |
+| `cases/l4_dialog.jsonl` | L4 대화 (여러 턴, 답 문장까지) | 21 (26턴) | 6 |
+
+케이스 원본은 `make_cases.py` 다. 고칠 때는 이 파일을 고치고 `uv run python eval/make_cases.py` 로 다시 만든다.
+
+한 번 전체를 돌리면 LLM 을 약 123회(개발용만 약 91회) 부른다. Gemini 3.1 Flash-Lite 무료 한도를 하루 500회로 보고
+(정확한 값은 AI Studio 의 Rate limit 화면) 하루에 전체 실행 3~4번이 들어가게 줄였다.
 
 형식 검사 (LLM 을 부르지 않는다. `pytest` 에도 들어 있다):
 
@@ -16,7 +21,8 @@ uv run python scripts/check_eval_cases.py
 ```
 
 규칙 번호가 규칙 문서에 있는지, 학교·건물·우선순위·의도가 고를 수 있는 값인지, L3 기대가 확인 도구에 있는
-칸·시설·값인지, L3 정답 예시(`reference`)가 `ExclusionPlan` 검증과 기대를 통과하는지 본다.
+칸·시설·값인지, L3 정답 예시(`reference`)가 `ExclusionPlan` 검증과 기대를 통과하는지, 규칙 문서 R-508 기본값 숫자와
+코드 `DEFAULT_RULES` 숫자가 같은지 본다.
 코드나 규칙 문서를 바꾸면 케이스가 어긋났는지 여기서 바로 드러난다.
 
 ## 공통
@@ -33,7 +39,7 @@ uv run python scripts/check_eval_cases.py
 
 | 키 | 뜻 |
 |---|---|
-| `intent` | 허용하는 의도 목록. `update` `recommend` `what_if` `revert` `compare` `explain` `exclude` `remove_exclusion` `out_of_scope` |
+| `intent` | 허용하는 의도 목록. `update` `recommend` `what_if` `revert` `compare` `explain` `exclude` `remove_exclusion` `out_of_scope` `greeting` |
 | `profile` | 칸 → 기대값. `null` 은 비어 있어야 함, `"priorities.0"` 은 1순위만, `{"approx", "tol"}` 은 근삿값 |
 | `others_unchanged` | `profile` 에 없는 칸은 `context.current` 그대로 |
 | `unchanged` | 생활 프로필이 하나도 바뀌지 않음 (가정·설명·비교·범위 밖, R-1001) |

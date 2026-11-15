@@ -8,13 +8,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval.cases_check import check_all, summary  # noqa: E402
+from eval.cases_check import check_all, estimate_calls, summary  # noqa: E402
 
 
 def main() -> int:
     for name, s in summary().items():
         extra = f", 대화 턴 {s['턴']}" if name.startswith("l4") else ""
         print(f"{name}: {s['전체']}개 (평가용 {s['평가용']}{extra})")
+    print(f"LLM 호출 어림: 전체 {estimate_calls()}회 (개발용만 {estimate_calls('dev')}회)")
     errs = check_all()
     for e in errs:
         print("  ✗", e)

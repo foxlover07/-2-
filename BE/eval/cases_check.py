@@ -19,14 +19,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.exclusions import AMENITIES, BUILDING_FIELDS, LISTING_FIELDS, ONSITE_CHECKS, ExclusionPlan
+from app.exclusions import AMENITIES, BUILDING_FIELDS, DEFAULT_RULES, LISTING_FIELDS, ONSITE_CHECKS, ExclusionPlan
 from app.scoring import FACTORS
 
 BE = Path(__file__).resolve().parents[1]
 CASES = BE / "eval" / "cases"
 RULES_DOC = BE.parent / "docs" / "chatbot-rules.md"
 
-INTENTS = ("update", "recommend", "what_if", "revert", "compare", "explain", "exclude", "remove_exclusion", "out_of_scope")
+INTENTS = ("update", "recommend", "what_if", "revert", "compare", "explain", "exclude", "remove_exclusion", "out_of_scope",
+           "greeting")
 SPLITS = ("dev", "heldout")
 PROFILE_FIELDS = ("university", "department_buildings", "priorities", "budget_manwon", "deposit_budget_manwon",
                   "desired_commute_min", "desired_area_m2", "larger_area", "timetable")
@@ -252,9 +253,33 @@ def check_l4(rows: list[dict[str, Any]], bld: dict[str, set[str]]) -> list[str]:
     return errs
 
 
+def check_defaults_match_doc() -> list[str]:
+    """R-508 기본값 표의 숫자와 코드 DEFAULT_RULES 의 숫자가 같은지 (한쪽만 고치면 실패)."""
+    text = RULES_DOC.read_text(encoding="utf-8")
+    sec = text[text.index("**R-508"):text.index("**R-509")]
+    doc = {int(n) for n in re.findall(r"(\d+)(?:m|층) (?:이하|이상|초과)", sec)}
+    code = {int(c["exclude_if"]["value"]) for c in DEFAULT_RULES if isinstance(c["exclude_if"]["value"], (int, float))}
+    errs = []
+    if doc != code:
+        errs.append(f"R-508 기본값 숫자 {sorted(doc)} ≠ 코드 DEFAULT_RULES {sorted(code)}")
+    return errs
+
+
+def estimate_calls(only: str | None = None) -> int:
+    """한 번 실행할 때 LLM 호출 수 (어림). L2·L3 는 케이스당 1번, L4 는 턴마다 추출 1 + 답 1, 제외 턴은 계획 1 더."""
+    def keep(r):
+        return only is None or r["split"] == only
+    n = sum(keep(r) for r in load("l2_extract.jsonl")) + sum(keep(r) for r in load("l3_plan.jsonl"))
+    for r in load("l4_dialog.jsonl"):
+        if keep(r):
+            for t in r["turns"]:
+                n += 2 + ("exclude" in t["expect"].get("intent", []) or "exclusions_count" in t["expect"])
+    return n
+
+
 def check_all() -> list[str]:
     known, bld = rule_ids(), buildings_by_university()
-    errs: list[str] = []
+    errs: list[str] = check_defaults_match_doc()
     if len(bld) != 4:
         errs.append(f"규칙 문서 R-101 표에서 대학 4개를 읽지 못함: {sorted(bld)}")
     for name, layer, fn in (("l2_extract.jsonl", "L2", lambda rows: check_l2(rows, bld)),

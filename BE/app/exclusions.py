@@ -426,6 +426,8 @@ DEFAULT_RULES: list[dict[str, Any]] = [
     {"say": "엘리베이터 없는 고층 싫어", "tool": "listing_field", "field": "stairs_floor", "exclude_if": {"op": ">=", "value": 4}},
     {"say": "근생 원룸 싫어 / 전입신고 되는 집", "tool": "building_field", "field": "main_use",
      "exclude_if": {"op": "in", "value": ["근린생활시설"]}},
+    {"say": "편의점(마트·세탁소·코인빨래방·약국·병원) 가까웠으면 좋겠어", "tool": "amenity", "amenity": "convenience",
+     "metric": "nearest_m", "exclude_if": {"op": ">", "value": 200}, "why": "'~좋겠어'는 반대 조건을 제외로. 도보 약 2~3분"},
 ]
 
 RULES = [
