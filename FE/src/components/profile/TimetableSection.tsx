@@ -5,6 +5,7 @@ import { PERIODS, groupConsecutive, periodRangeLabel, toPeriodRange } from '../.
 import { useUniversity } from '../../contexts/UniversityContext'
 import { Button, Chip, Select } from '../common'
 import { SectionCard } from './SectionCard'
+import { WeekGrid } from './WeekGrid'
 import { newRowId, type TimetableRow } from './profileForm'
 
 // 시간표는 평일 수업만 받는다
@@ -131,6 +132,11 @@ export function TimetableSection({ step, rows, onRowsChange, rowErrors, building
           {notice}
         </p>
       )}
+
+      {/* 에타 느낌의 주간 미리보기 (건물별 색) */}
+      <div className="mb-3">
+        <WeekGrid periods={periods} slots={rows} minRows={periods.length > 10 ? 9 : 6} />
+      </div>
 
       {/* 추가한 수업 목록 */}
       <ul className="divide-y divide-border rounded-control border border-border">
