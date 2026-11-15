@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from app.agent.schemas import (
+    PlanDraft,
     UNIVERSITIES,
     AgentProfile,
     AnalysisOut,
@@ -32,7 +33,9 @@ from app.building_register import building_for
 from app.buildings import ALIASES, normalize as normalize_building, resolve
 from app.data import get_property, load_properties, load_travel_times
 from app.decision.engine import EngineContext, travel_min
-from app.exclusions import Condition, ExcludeIf, ExclusionPlan
+from app.exclusions import (
+    AMENITIES, ONSITE_CHECKS, Condition, ExcludeIf, ExclusionPlan, available_amenities, josa,
+)
 from app.decision.pareto import ParetoRequest, TradeoffRequest, run_pareto, run_tradeoff
 from app.decision.relaxation import RelaxationRequest, run_relaxation
 from app.decision.sensitivity import SensitivityRequest, run_sensitivity
@@ -335,7 +338,8 @@ def area_min_plan(min_m2: float) -> ExclusionPlan:
 
 
 def exclusion_lines(plans: list[ExclusionPlan]) -> list[str]:
-    return [f"- {p.source_text}: {p.confirm_message}" for p in plans]
+    """'바뀐 것' 줄. 장소 기호는 서버가 만든 confirm_message, 계획 단계 조건은 Condition.describe() (서버 문장)."""
+    return [f"- {p.source_text}: {p.confirm_message or ' / '.join(c.describe() for c in p.conditions)}" for p in plans]
 
 
 def _unknown_note(unknown: list[str], university: str) -> str:
@@ -767,3 +771,111 @@ def check_timetable_read(read: "TimetableRead", university: str) -> list["SlotOu
         out.append(SlotOut(day=s.day, start=s.start, end=s.end, building=building,
                            building_text=s.building_text, course=s.course, issue=issue))
     return out
+
+
+# ---------------------------------------------------------------- 제외 조건 계획 (agent-integrated 에서 가져옴, 2026-11-16)
+# 장소 기호(술집·편의점 등 상가 8종)는 place_prefs → build_exclusion_plan 이 그대로 맡는다.
+# 그 밖의 기호(매물 칸·건축물대장·현장 확인·확인 불가)는 LLM 이 도구 목록(exclusions.tool_catalog)으로 계획하고 여기서 검증한다.
+
+PROFILE_FIELDS_IN_LISTING = {"deposit_manwon": "보증금 상한", "monthly_cost_manwon": "유지비 상한", "area_m2": "희망 면적"}
+ONSITE_ALIASES = {
+    "벽간 소음": "방음", "층간 소음": "방음", "소음": "방음", "햇빛": "채광", "일조": "채광", "습기": "결로·습기",
+    "결로": "결로·습기", "외풍": "외풍·단열", "단열": "외풍·단열", "옵션": "옵션 상태", "바퀴벌레": "벌레",
+}
+
+
+def _onsite_key(text: str) -> str | None:
+    if text in ONSITE_CHECKS:
+        return text
+    for k in ONSITE_CHECKS:
+        if k in text or text in k:
+            return k
+    for a, k in ONSITE_ALIASES.items():
+        if a in text:
+            return k
+    return None
+
+
+def plan_from_draft(draft: PlanDraft, source_text: str, props: Any = None) -> tuple[ExclusionPlan, list[str]]:
+    """LLM 계획 → 검증한 ExclusionPlan. 검증에 실패한 조건은 추측해서 고치지 않고 unsupported·현장 확인으로 보낸다."""
+    from pydantic import ValidationError
+
+    from app.scoring_config import CONFIG
+
+    notes: list[str] = []
+    have = available_amenities(props) if props is not None else dict(AMENITIES)
+    conds: list[Condition] = []
+    unsupported = list(dict.fromkeys(draft.unsupported))
+    onsite = [k for k in (_onsite_key(x) for x in draft.onsite_checks) if k]
+    used_labels: set[str] = set()
+    for d in draft.conditions:
+        if d.tool == "listing_field" and d.field in PROFILE_FIELDS_IN_LISTING:
+            notes.append(f"'{d.label}'{josa(d.label, '은', '는')} 제외 조건이 아니라 "
+                         f"{PROFILE_FIELDS_IN_LISTING[d.field]} 조건으로 바꿔 말해 주세요.")
+            continue
+        raw: dict[str, Any] = {"tool": d.tool, "label": d.label.strip() or "조건",
+                               "exclude_if": {"op": d.op, "value": d.values if d.op in ("in", "not_in") else d.value}}
+        if d.tool in ("listing_field", "building_field"):
+            raw["field"] = d.field
+        elif d.tool == "amenity":
+            if d.amenity in AMENITIES and d.amenity not in have:  # 데이터 칸이 없는 시설 → 장소 검색
+                name = AMENITIES[d.amenity]
+                if d.metric == "count_500m":
+                    raw.update(tool="nearby_count", keywords=[name], radius_m=CONFIG.amenity_known_radius_m)
+                else:
+                    raw.update(tool="nearest_distance", keywords=[name], radius_m=1000)
+            else:
+                raw.update(amenity=d.amenity, metric=d.metric or "nearest_m")
+        else:
+            raw.update(keywords=d.keywords or [d.label], radius_m=d.radius_m or (300 if d.tool == "nearby_count" else None))
+        base, i = raw["label"], 2
+        while raw["label"] in used_labels:
+            raw["label"], i = f"{base} {i}", i + 1
+        try:
+            c = Condition.model_validate(raw)
+        except ValidationError:
+            key = _onsite_key(d.label)
+            if key:
+                onsite.append(key)
+            else:
+                unsupported.append(d.label)
+            continue
+        used_labels.add(c.label)
+        conds.append(c)
+    plan = ExclusionPlan(source_text=source_text, conditions=conds, unsupported=unsupported,
+                         onsite_checks=list(dict.fromkeys(onsite)))
+    return plan, notes
+
+
+def _target(c: Condition) -> tuple:
+    if c.tool in ("listing_field", "building_field"):
+        return (c.tool, c.field)
+    if c.tool == "amenity":
+        return ("amenity", c.amenity, c.metric)
+    return ("place", c.tool, tuple(sorted(c.keywords)))
+
+
+def merge_plans(existing: list[ExclusionPlan], new: ExclusionPlan) -> tuple[list[ExclusionPlan], list[str]]:
+    """같은 대상을 다시 말하면 기존 조건을 새 기준으로 바꾼다 (R-510). → (새 목록, 바뀐 기존 조건 이름)."""
+    targets = {_target(c) for c in new.conditions}
+    replaced: list[str] = []
+    out: list[ExclusionPlan] = []
+    for plan in existing:
+        keep = [c for c in plan.conditions if _target(c) not in targets]
+        replaced += [c.label for c in plan.conditions if _target(c) in targets]
+        if keep:
+            out.append(plan.model_copy(update={"conditions": keep}))
+    if new.conditions:
+        out.append(new.model_copy(update={"unsupported": [], "onsite_checks": []}))
+    seen: set[str] = set()  # 이름이 겹치면 실행기가 구분하지 못하므로 뒤 것에 번호를 붙인다
+    fixed: list[ExclusionPlan] = []
+    for plan in out:
+        conds = []
+        for c in plan.conditions:
+            label, i = c.label, 2
+            while label in seen:
+                label, i = f"{c.label} {i}", i + 1
+            seen.add(label)
+            conds.append(c if label == c.label else c.model_copy(update={"label": label}))
+        fixed.append(plan.model_copy(update={"conditions": conds}))
+    return fixed, replaced

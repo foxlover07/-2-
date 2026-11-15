@@ -28,7 +28,20 @@ Intent = Literal[
     "analyze",           # 의사결정 분석 (analysis 로 종류 지정)
     "policy",            # 주거 지원 정책 안내 (자격 판정 안 함, 2026-11-15 사용자 결정)
     "explain",           # 지난 추천 결과 설명 / 매물 질문
+    "out_of_scope",      # 범위 밖 (규칙 문서 7장, scope_topic 으로 종류). agent-integrated 에서 가져옴 (2026-11-16)
     "smalltalk",         # 그 밖의 대화
+]
+
+# 범위 밖 질문 종류 (docs/chatbot-rules.md R-701). 판단하지 않고 안내처를 알린다
+ScopeTopic = Literal[
+    "contract_legal",     # 계약·특약·보증금 반환·분쟁
+    "fraud_registry",     # 매물 사기·안전 여부, 등기
+    "landlord",           # 집주인·관리 상태
+    "listing_guarantee",  # 매물 실재·현재 거래 가능 여부
+    "market_forecast",    # 투자·시세 전망
+    "unsupported_region", # 지원하지 않는 지역·학교
+    "unrelated",          # 주거와 무관한 질문 (키·서버 정보 요청 포함)
+    "timetable_photo",    # 대화창에서 시간표 사진을 읽어 달라는 요청 → 생활 프로필 캡처 불러오기 안내
 ]
 
 # 분석 도구 (Phase 2·7). 추천 점수·순위는 바꾸지 않는 참고 분석이다.
@@ -124,9 +137,33 @@ class ProfileChanges(BaseModel):
         None, description="지울 자주 가는 곳 (저장된 name 또는 장소 이름). 전부 지우면 ['*']")
 
 
+# ---------------------------------------------------------------- 제외 조건 계획 (LLM 출력, agent-integrated 에서 가져옴)
+
+class ConditionDraft(BaseModel):
+    tool: Literal["listing_field", "building_field", "amenity", "nearby_count", "nearest_distance"]
+    label: str = Field(description="짧은 이름 (예: 층 종류, 승강기, 편의점)")
+    field: str | None = Field(None, description="listing_field / building_field 의 칸")
+    amenity: str | None = Field(None, description="amenity 시설 키 (예: bar, convenience)")
+    metric: Literal["nearest_m", "count_500m"] | None = None
+    keywords: list[str] = Field(default_factory=list, description="장소 검색어 (amenity 에 없는 장소만)")
+    radius_m: int | None = None
+    op: Literal[">", ">=", "<", "<=", "==", "!=", "in", "not_in"] = Field(description="이 조건이면 매물을 뺀다")
+    value: float | None = Field(None, description="숫자 칸의 기준값")
+    values: list[str] | None = Field(None, description="종류 칸(in / not_in)의 값 목록")
+
+
+class PlanDraft(BaseModel):
+    conditions: list[ConditionDraft] = Field(default_factory=list)
+    unsupported: list[str] = Field(default_factory=list, description="데이터로 확인할 수 없는 기호")
+    onsite_checks: list[str] = Field(default_factory=list, description="매물에서 직접 확인할 것 (정해진 항목 이름)")
+
+
 class TurnExtraction(BaseModel):
     intent: Intent
     changes: ProfileChanges = Field(default_factory=ProfileChanges)
+    exclusion_request: str | None = Field(
+        None, description="장소(place_prefs)가 아닌 기호 문장 그대로 (반지하 싫어, 엘리베이터 있는 곳, 분리형 원룸만, 방음, 오래된 건물 싫어 등)")
+    scope_topic: ScopeTopic | None = Field(None, description="intent=out_of_scope 일 때 종류")
     analysis: AnalysisKind | None = Field(None, description="intent=analyze 일 때 분석 종류")
     unsupported: list[str] = Field(
         default_factory=list, description="지금 계산할 수 없는 요청 (예: 심야 안전, 오르막)")

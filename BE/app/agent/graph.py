@@ -29,6 +29,7 @@ from langgraph.types import Command, interrupt
 from app.agent import tools
 from app.agent.llm import AgentLLM, LLMError, LLMUnavailable, profile_context
 from app.agent.schemas import AgentProfile, AnalysisOut, Comparison, ProfileChanges, RecSummary, TurnExtraction
+from app.exclusions import josa, tool_catalog
 from app.agent.spec import capability_spec
 from app.config import _read
 from app.data import load_properties
@@ -154,11 +155,35 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         except LLMError as e:
             out.update(status="llm_error", notes=[str(e)], llm_error_kind=getattr(e, "kind", "other"))
             return out
+        msg = state["user_message"]
+        if "시간표" in msg and any(w in msg for w in PHOTO_WORDS):  # 대화창에서는 사진을 받지 않는다 (R-202)
+            ex = ex.model_copy(update={"intent": "out_of_scope", "scope_topic": "timetable_photo"})
+        if ex.exclusion_request and ex.intent in ("smalltalk", "explain"):  # 기호만 말한 턴 = 조건 변경 (R-201)
+            ex = ex.model_copy(update={"intent": "update"})
         ex, guide = apply_chat_mode(ex, state.get("chat_mode"))
         if guide:
             out["blocked"] = guide
         out.update(intent=ex.intent, extraction=_dump(ex))
         return out
+
+    def plan_exclusion(base: AgentProfile, request: str) -> tuple[AgentProfile, list[str], list[str]]:
+        """장소가 아닌 기호 → LLM 확인 계획 → 서버 검증·병합 (agent-integrated 에서 가져옴, 규칙 문서 5장).
+        → (조건을 합친 프로필, 답변 앞에 붙일 줄, notes). 남는 매물 0개 확인·'바뀐 것'은 apply_exclusions_now 가 한다."""
+        props = [x for x in load_properties() if x.university == base.university] if base.university else list(load_properties())
+        ctx = {"catalog": tool_catalog(props or None),
+               "exclusions": [c.describe() for e in base.exclusions for c in e.conditions]}
+        try:
+            draft = get_llm().plan(request, ctx)
+        except (LLMError, LLMUnavailable):
+            return base, [], ["기호를 확인 조건으로 바꾸지 못했어요. 잠시 뒤 다시 말해 주세요."]
+        plan, notes = tools.plan_from_draft(draft, request, props or None)
+        if not plan.conditions:  # 현장 확인·확인 불가만 있음 → 매물은 빼지 않고 안내만
+            return base, [plan.applied_text(None)], notes
+        merged, replaced = tools.merge_plans(list(base.exclusions), plan)
+        extra = plan._tail_lines()
+        if replaced:
+            extra.append(f"(기존 조건 {', '.join(replaced)}{josa(replaced[-1], '은', '는')} 새 기준으로 바꿨어요.)")
+        return base.model_copy(update={"exclusions": merged}), extra, notes
 
     def update_profile(state: AgentState) -> AgentState:
         if state["status"] != "ok":
@@ -172,12 +197,18 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         if ex.intent in ("recommend", "update", "analyze"):  # 분석 요청에 같이 온 조건도 저장
             new, n = tools.apply_changes(current, ex.changes)
             notes += n
-            # 장소 제외 조건은 확인 질문 없이 바로 적용하고 '바뀐 것'을 답변 맨 앞에 (11/15 팀 결정).
+            extra: list[str] = []
+            if ex.exclusion_request:
+                new, extra, n = plan_exclusion(new, ex.exclusion_request)
+                notes += n
+            # 제외 조건은 확인 질문 없이 바로 적용하고 '바뀐 것'을 답변 맨 앞에 (11/15 팀 결정).
             # 적용하면 남는 매물이 0개일 때만 그 조건을 넣지 않고 되묻는다.
             added = [e for e in new.exclusions if e not in current.exclusions]
             if added:
                 new, lead = apply_exclusions_now(current, new, added)
-                out["lead_text"] = lead
+                out["lead_text"] = "\n".join([lead, *extra])
+            elif extra:
+                out["lead_text"] = "\n".join(extra)
             if new != current:
                 commit = dict(previous_profile=_dump(current), previous_recommendation=state.get("last_recommendation"),
                               current_profile=_dump(new), profile_changed=True)
@@ -189,6 +220,11 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         elif ex.intent == "what_if":
             scen, n = tools.apply_changes(current, ex.changes)
             notes += n
+            if ex.exclusion_request:  # 가정에도 기호를 반영 (저장하지 않는다)
+                scen, extra, n = plan_exclusion(scen, ex.exclusion_request)
+                notes += n
+                if extra:
+                    out["lead_text"] = "\n".join(extra)
             if scen == current:
                 notes.append("가정으로 바뀌는 조건이 없어 지금 조건과 같습니다.")
             out["scenario_profile"] = _dump(scen)
@@ -321,6 +357,9 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         explain_model = None
         if status in ("llm_unavailable", "llm_error", "error"):
             text, source = fallback_text(facts), "fallback_error"
+        elif state.get("intent") == "out_of_scope":  # 판단하지 않고 안내처 (R-701)
+            topic = (state.get("extraction") or {}).get("scope_topic") or "unrelated"
+            text, source = REFUSAL.get(topic, REFUSAL["unrelated"]), "template_refusal"
         elif state.get("blocked") or state.get("pending_required_fields"):
             text, source = fallback_text(facts), "template_question"
         elif not llm_explain_enabled():
@@ -336,6 +375,8 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
                 source = "llm"
                 if not text or not numbers_grounded(text, facts):
                     text, source = fallback_text(facts), "fallback_ungrounded"
+                elif any(w in text for w in FORBIDDEN_PHRASES):  # 보장·판단하는 말 (R-702)
+                    text, source = fallback_text(facts), "fallback_forbidden"
             except (LLMError, LLMUnavailable):
                 text, source = fallback_text(facts), "fallback_llm_failed"
         if state.get("lead_text"):
@@ -356,6 +397,29 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
 
 # ---------------------------------------------------------------- 분기
 
+# 범위 밖 안내 (규칙 문서 R-701, agent-integrated 에서 가져와 정책 안내·계약 전 확인으로 연결)
+OFFER = "대신 조건에 맞는 매물을 더 찾아 드릴 수 있어요."
+REFUSAL = {
+    "contract_legal": "계약·특약·보증금 반환 같은 법률 문제는 제가 판단할 수 없어요. 대한법률구조공단(국번 없이 132)이나 "
+                      "주택임대차분쟁조정위원회에 상담해 보세요. 계약 전에 확인할 것은 챗봇 위쪽 '정책 안내' 모드에서 "
+                      "'계약 전에 확인할 것'을 물어보시면 단계별로 알려 드려요.",
+    "fraud_registry": "계약해도 안전한지, 사기인지는 제가 판단할 수 없어요. 계약 전에 인터넷등기소에서 등기부등본을 떼어 "
+                      "집주인과 권리 관계를 확인하고, 공인중개사 등록 여부도 확인해 보세요. 매물 상세의 '계약 전 확인' 카드에 "
+                      "그 매물의 실거래 비교와 건축물대장 정보가 함께 있어요.",
+    "landlord": "집주인이나 관리 상태는 데이터로 알 수 없어요. 집 보러 갈 때 직접 확인해 보세요. " + OFFER,
+    "listing_guarantee": "광고 매물이라 실제로 있는지, 지금 계약할 수 있는지는 보장할 수 없어요. 원문 링크에서 확인해 주세요. " + OFFER,
+    "market_forecast": "시세가 오르거나 내릴지는 예측해 드리지 않아요. 대신 매물 상세에서 주변 실거래와 비교한 값을 볼 수 있어요.",
+    "unsupported_region": "지금은 " + "·".join(["이화여자대학교", "고려대학교", "서강대학교", "서울과학기술대학교"])
+                          + " 인근 원룸·오피스텔 월세 매물만 추천할 수 있어요. 이 중 한 곳을 알려 주시면 바로 찾아 드릴게요.",
+    "unrelated": "저는 대학가 자취방 추천과 주거 정책 안내를 도와드려요. 학교·예산·통학 시간 같은 조건을 말해 주시면 매물을 찾아 드릴게요.",
+    "timetable_photo": "대화창에서는 시간표 사진을 받지 않아요. 생활 프로필의 '시간표 캡처로 불러오기'에서 사진을 올리면 수업 칸을 읽어 "
+                       "확인한 뒤 넣을 수 있어요. \"월수 9시부터 10시 반까지 ECC\"처럼 말해 주셔도 돼요.",
+}
+PHOTO_WORDS = ("사진", "이미지", "캡처", "캡쳐", "스크린샷")
+# 보장·판단하는 말 (R-702). 설명 문장에 나오면 사실 문장으로 바꾼다
+FORBIDDEN_PHRASES = ("안전합니다", "안전해요", "사기가 아닙니다", "사기 아니에요", "계약해도 됩니다", "계약해도 돼요",
+                     "사기 위험이 적", "대상자입니다", "받을 수 있습니다")
+
 MODE_GUIDE_POLICY = ("주거 지원 정책·계약 질문은 챗봇 위쪽 배너에서 '정책 안내' 모드로 바꾼 뒤 물어봐 주세요. "
                      "'매물 추천' 모드에서는 매물 추천·조건 변경·분석만 다룹니다.")
 
@@ -364,6 +428,10 @@ def apply_chat_mode(ex: TurnExtraction, mode: str | None) -> tuple[TurnExtractio
     """FE 모드 배너에 맞춰 의도를 고정한다. mode 가 없으면 LLM 판별 그대로 (기존 동작).
     - policy: 인사(smalltalk) 외에는 모두 정책 안내로 보내고, 프로필 조건은 바꾸지 않는다.
     - recommend: 정책 질문이면 정책 검색을 하지 않고 모드 전환을 안내한다."""
+    if mode == "policy" and ex.intent == "out_of_scope":
+        if ex.scope_topic in ("contract_legal", "fraud_registry"):  # R-703: 거절 대신 계약 안전 점검 목록
+            return ex.model_copy(update={"intent": "policy", "policy_kind": "contract_safety", "changes": ProfileChanges()}), None
+        return ex, None
     if mode == "policy" and ex.intent not in ("policy", "smalltalk"):
         return ex.model_copy(update={"intent": "policy", "changes": ProfileChanges()}), None
     if mode == "recommend" and ex.intent == "policy":
@@ -383,7 +451,7 @@ def route_after_confirm(state: AgentState) -> str:
     if state.get("status") != "ok" or state.get("confirm_declined"):
         return "respond"
     intent = state.get("intent")
-    if intent in ("explain", "smalltalk"):
+    if intent in ("explain", "smalltalk", "out_of_scope"):
         return "respond"
     if intent == "policy":
         return "policy"

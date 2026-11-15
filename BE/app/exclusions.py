@@ -37,6 +37,13 @@ Tool = Literal["nearby_count", "nearest_distance", "listing_field", "building_fi
 MAX_RADIUS_M = 20000  # 카카오 장소 검색 반경 최대값
 
 
+def _place_source() -> str:
+    """장소 조건의 출처 표시: 설정(PLACE_SEARCH)에 맞춘다. 기본 local = 상가정보 파일 (app.place_search)."""
+    from app.config import _read
+
+    return "카카오 장소 검색" if (_read("PLACE_SEARCH") or "local").strip().lower() == "kakao" else "상가정보 등록 업소"
+
+
 def josa(word: str, with_final: str, without_final: str) -> str:
     """받침을 보고 조사를 고른다 (이/가, 을/를, 은/는). 마지막 한글 글자 기준, 한글이 없으면 뒤쪽 것."""
     for ch in reversed(word):
@@ -304,8 +311,9 @@ class Condition(BaseModel):
             name, unit = self._name_unit()
             word = _OP_WORDS[e.op]
             text = f"{name} {_fmt(e.value)}{unit}{(' ' + word) if word else ''}인 매물 제외"  # type: ignore[arg-type]
+        place = _place_source()
         source = {
-            "nearby_count": "카카오 장소 검색", "nearest_distance": "카카오 장소 검색", "listing_field": "매물 정보",
+            "nearby_count": place, "nearest_distance": place, "listing_field": "매물 정보",
             "building_field": "건축물대장", "amenity": "공공데이터 주변 시설",
         }[self.tool]
         return f"{text} ({source})"
@@ -426,6 +434,8 @@ DEFAULT_RULES: list[dict[str, Any]] = [
     {"say": "엘리베이터 없는 고층 싫어", "tool": "listing_field", "field": "stairs_floor", "exclude_if": {"op": ">=", "value": 4}},
     {"say": "근생 원룸 싫어 / 전입신고 되는 집", "tool": "building_field", "field": "main_use",
      "exclude_if": {"op": "in", "value": ["근린생활시설"]}},
+    {"say": "편의점(마트·세탁소·코인빨래방·약국·병원) 가까웠으면 좋겠어", "tool": "amenity", "amenity": "convenience",
+     "metric": "nearest_m", "exclude_if": {"op": ">", "value": 200}, "why": "'~좋겠어'는 반대 조건을 제외로. 도보 약 2~3분"},
 ]
 
 RULES = [

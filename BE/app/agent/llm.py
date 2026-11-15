@@ -21,7 +21,8 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any, Literal, Protocol
 
-from app.agent.schemas import UNIVERSITIES, AgentProfile, TimetableRead, TurnExtraction
+from app.agent import rules
+from app.agent.schemas import UNIVERSITIES, AgentProfile, PlanDraft, TimetableRead, TurnExtraction
 from app.config import _read
 
 # 혼잡(503)·시간 초과(504)는 잠깐 뒤 다시 하면 되는 경우가 많다 (2026-11-10 실제로 Flash 계열 전체가 503/504).
@@ -82,6 +83,7 @@ def classify_error(e: BaseException) -> ErrorKind:
 class AgentLLM(Protocol):
     def extract(self, message: str, context: dict[str, Any]) -> TurnExtraction: ...
     def explain(self, user_message: str, facts: dict[str, Any]) -> str: ...
+    def plan(self, request: str, context: dict[str, Any]) -> PlanDraft: ...
     def read_timetable(self, image_b64: str, mime_type: str, buildings: list[str]) -> TimetableRead: ...
 
 
@@ -104,6 +106,9 @@ EXTRACT_SYSTEM = f"""너는 대학생 자취방 추천 서비스의 조건 추�
   "술집 조건 빼 줘" → remove_exclusions ["술집"], 장소 조건 전부 해제 → ["*"]. 의도는 update (가정이면 what_if).
   "주변 150m 안에 술집이 많은 매물은 빼 줘" → {{place: "술집", want: "avoid", radius_m: 150}} (개수를 말하지 않으면 max_count null).
   "걸어서 3분(200m)" 처럼 거리를 같이 말하면 그 m 값을 radius_m 에.
+- 장소가 아닌 기호(반지하·옥탑 싫어, 엘리베이터 있는 곳, 분리형 원룸만, 오래된 건물 싫어, 근생 싫어, 방음·곰팡이·채광,
+  치안·오르막 등)는 그 부분 문장을 그대로 exclusion_request 에 넣는다 (확인 계획은 다음 단계가 만든다).
+  상가 장소(술집·편의점 등)는 place_prefs, 예산·보증금·면적·통학 시간으로 표현되는 말은 changes 다 (exclusion_request 아님).
 - "면적 20㎡ 이상만", "20㎡ 넘는 것만" 처럼 꼭 지켜야 하는 최소 면적은 area_min_m2 (필터). "18㎡ 정도면 좋겠어" 같은 희망은 desired_area_m2.
 - 건물별 주 몇 번("공대 주 4번, ECC 주 2번")은 건물 이름만 department_buildings 에 담고,
   unsupported 에 "건물별 방문 횟수(시간표를 입력하면 요일별로 반영)" 를 넣는다 (횟수를 저장할 칸이 없다).
@@ -141,7 +146,39 @@ EXTRACT_SYSTEM = f"""너는 대학생 자취방 추천 서비스의 조건 추�
   · contract_safety: "전세사기 안 당하려면 뭘 확인해?", "계약 전에 확인할 것"
   지역을 말하면 policy_regions 에 큰 단위부터 ("서울 서대문구" → ["서울", "서대문구"]).
 - explain: 지난 추천 결과나 특정 매물 설명 ("2등 매물은 왜?") → property_rank
+- out_of_scope: 범위 밖 (아래 규칙 7장) → scope_topic: contract_legal(계약·특약·보증금 반환·분쟁),
+  fraud_registry(사기·안전·등기), landlord(집주인·관리 상태), listing_guarantee(매물이 진짜 있는지·지금 계약 가능한지),
+  market_forecast(시세 전망·투자), unsupported_region(지원하지 않는 지역·학교), unrelated(주거와 무관, 서버·키 정보 요청 포함).
+  "전세사기 안 당하려면 뭘 확인해?"처럼 확인 방법을 묻는 것은 policy(contract_safety)다.
 - smalltalk: 그 밖의 대화
+"""
+
+
+def extract_system() -> str:
+    """조건 추출 프롬프트 + 규칙 문서 7장 (범위 밖 판단 기준)."""
+    return EXTRACT_SYSTEM + "\n" + rules.rules_block(7)
+
+
+def plan_system() -> str:
+    """제외 조건 계획 프롬프트 (agent-integrated 에서 가져옴) + 규칙 문서 5장."""
+    return f"""너는 자취방 추천 챗봇의 '제외 조건 계획' 담당이다. 사용자의 기호 문장을 확인 도구 조건으로 바꿔 JSON 으로 낸다.
+매물을 직접 판단하지 않는다. 어떤 도구로 무엇을 확인할지만 정한다. 확인은 코드가 한다 (R-501).
+
+계획 규칙
+- 조건은 '이 조건이면 매물을 뺀다'로 쓴다 (op, value / values). "~가 좋겠어/있었으면"은 반대 조건을 제외로 바꾼다 (R-502).
+- 사용자가 숫자를 말하면 그 숫자를 쓰고, 말하지 않으면 context.catalog.defaults 의 기본값을 쓴다 (R-508).
+- 도구·칸·시설·값은 context.catalog 에 있는 것만 쓴다. 종류 칸은 op in / not_in 과 values(고를 수 있는 값).
+  · op in = values 에 있는 값이면 뺀다. op not_in = values 에 없는 값이면 뺀다 (= values 만 남긴다).
+  · "A 싫어"·"A 빼 줘" → op in, values [A]. "A만"·"A만 볼래"·"A여야 해" → op not_in, values [A].
+    예: "분리형 원룸만" → room_type, op not_in, values ["분리형원룸"]. "투룸은 빼 줘" → room_type, op in, values ["투룸"].
+- amenity 에 있는 시설은 amenity 를 쓰고, 없는 장소만 nearby_count·nearest_distance(keywords)를 쓴다.
+- 방음·곰팡이·결로·채광·수압·배수·벌레·외풍·냄새·옵션 상태는 조건을 만들지 말고 onsite_checks 에 항목 이름을 넣는다.
+  다른 데이터(건물 연식·층·구조)로 대신 판단하지 않는다 (R-503).
+- 데이터로 확인할 수 없는 것(큰 도로 소음, 치안, 오르막 등)은 unsupported 에 짧게 적고 조건을 만들지 않는다 (R-504).
+- 예산·보증금·면적·통학 시간으로 표현되는 말은 제외 조건을 만들지 않는다 (R-310, 조건 변경).
+- 같은 대상을 다시 말하면 새 기준으로 조건 하나만 만든다 (R-510). 지금 조건은 context.exclusions.
+
+{rules.rules_block(5)}
 """
 
 EXPLAIN_SYSTEM = """너는 대학생 자취방 추천 결과를 설명하는 도우미다. 아래 '사실' JSON 만 근거로 한국어로 짧게 설명한다.
@@ -271,7 +308,7 @@ class GeminiLLM(_FallbackLLM):
 
     def extract(self, message: str, context: dict[str, Any]) -> TurnExtraction:
         prompt = [
-            ("system", EXTRACT_SYSTEM),
+            ("system", extract_system()),
             ("human", "지금 조건:\n" + json.dumps(context, ensure_ascii=False) + "\n\n이번 메시지:\n" + message),
         ]
 
@@ -285,6 +322,23 @@ class GeminiLLM(_FallbackLLM):
                 raise LLMError("Gemini 응답 형식이 올바르지 않습니다", "bad_response") from e
 
         return self._call("조건 추출", run)
+
+    def plan(self, request: str, context: dict[str, Any]) -> PlanDraft:
+        prompt = [
+            ("system", plan_system()),
+            ("human", "맥락:\n" + json.dumps(context, ensure_ascii=False) + "\n\n사용자 기호:\n" + request),
+        ]
+
+        def run(chat: Any) -> PlanDraft:
+            out = chat.with_structured_output(PlanDraft).invoke(prompt)
+            if isinstance(out, PlanDraft):
+                return out
+            try:
+                return PlanDraft.model_validate(out)
+            except Exception as e:  # noqa: BLE001
+                raise LLMError("Gemini 응답 형식이 올바르지 않습니다", "bad_response") from e
+
+        return self._call("제외 계획", run)
 
     def explain(self, user_message: str, facts: dict[str, Any]) -> str:
         prompt = [
@@ -413,7 +467,11 @@ class ExaoneLLM(_FallbackLLM):
 
     def extract(self, message: str, context: dict[str, Any]) -> TurnExtraction:
         user = "지금 조건:\n" + json.dumps(context, ensure_ascii=False) + "\n\n이번 메시지:\n" + message
-        return self._structured("조건 추출", EXTRACT_SYSTEM, user, TurnExtraction)
+        return self._structured("조건 추출", extract_system(), user, TurnExtraction)
+
+    def plan(self, request: str, context: dict[str, Any]) -> PlanDraft:
+        user = "맥락:\n" + json.dumps(context, ensure_ascii=False) + "\n\n사용자 기호:\n" + request
+        return self._structured("제외 계획", plan_system(), user, PlanDraft)
 
     def explain(self, user_message: str, facts: dict[str, Any]) -> str:
         user = "사용자 메시지:\n" + user_message + "\n\n사실:\n" + json.dumps(facts, ensure_ascii=False)
@@ -527,6 +585,9 @@ class ProviderChain:
     def explain(self, user_message: str, facts: dict[str, Any]) -> str:
         return self._call("explain", user_message, facts)
 
+    def plan(self, request: str, context: dict[str, Any]) -> PlanDraft:
+        return self._call("plan", request, context)
+
     def read_timetable(self, image_b64: str, mime_type: str, buildings: list[str]) -> TimetableRead:
         return self.providers[0][1].read_timetable(image_b64, mime_type, buildings)
 
@@ -566,9 +627,12 @@ _FACTORIES.update({"exaone": exaone_from_env, "gemini": gemini_from_env})
 class ScriptedLLM:
     """테스트용: 미리 정한 추출 결과를 순서대로 돌려준다. explain 은 정한 문장(없으면 실패)을 돌려준다."""
 
-    def __init__(self, extractions: list[TurnExtraction | Exception], explanations: list[str | Exception] | None = None):
+    def __init__(self, extractions: list[TurnExtraction | Exception], explanations: list[str | Exception] | None = None,
+                 plans: list[PlanDraft | Exception] | None = None):
         self._ex = deque(extractions)
         self._exp = deque(explanations or [])
+        self._plans = deque(plans or [])
+        self.plan_contexts: list[dict[str, Any]] = []
         self.contexts: list[dict[str, Any]] = []
         self.facts: list[dict[str, Any]] = []
 
@@ -585,6 +649,15 @@ class ScriptedLLM:
         if isinstance(x, Exception):
             raise x
         return x  # type: ignore[return-value]
+
+    def plan(self, request: str, context: dict[str, Any]) -> PlanDraft:
+        self.plan_contexts.append(context)
+        if not self._plans:
+            raise LLMError("계획 없음 (테스트)")
+        x = self._plans.popleft()
+        if isinstance(x, Exception):
+            raise x
+        return x
 
     def explain(self, user_message: str, facts: dict[str, Any]) -> str:
         self.facts.append(facts)
