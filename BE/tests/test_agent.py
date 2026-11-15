@@ -285,3 +285,9 @@ def test_chat_api(monkeypatch):
     assert res.status_code == 200
     out = res.json()
     assert out["intent"] == "greeting" and out["status"] == "ok" and "안녕" in out["assistant_message"]
+
+
+def test_plan_prompt_explains_category_direction():
+    """'A만'은 not_in [A] (A 를 남긴다). 1차 평가 e25 에서 방향이 반대로 나와 규칙을 넣었다."""
+    p = plan_system()
+    assert "op not_in = values 에 없는 값이면 뺀다" in p and '"A만"' in p

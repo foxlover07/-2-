@@ -126,6 +126,9 @@ def plan_system() -> str:
   · "편의점 가까웠으면" → amenity convenience nearest_m, op ">", value 200 (200m 넘으면 제외)
 - 사용자가 숫자를 말하면 그 숫자를 쓰고, 말하지 않으면 context.catalog.defaults 의 기본값을 쓴다 (R-508).
 - 도구·칸·시설·값은 context.catalog 에 있는 것만 쓴다. 종류 칸은 op in / not_in 과 values(고를 수 있는 값).
+  · op in = values 에 있는 값이면 뺀다. op not_in = values 에 없는 값이면 뺀다 (= values 만 남긴다).
+  · "A 싫어"·"A 빼 줘" → op in, values [A]. "A만"·"A만 볼래"·"A여야 해" → op not_in, values [A] (A 를 남길 값으로 쓴다).
+    예: "분리형 원룸만" → room_type, op not_in, values ["분리형원룸"]. "투룸은 빼 줘" → room_type, op in, values ["투룸"].
 - amenity 에 있는 시설은 amenity 를 쓰고, 없는 장소만 nearby_count·nearest_distance(keywords)를 쓴다.
 - 방음·곰팡이·결로·채광·수압·배수·벌레·외풍·냄새·옵션 상태는 조건을 만들지 말고 onsite_checks 에 항목 이름을 넣는다.
   다른 데이터(건물 연식·층·구조)로 대신 판단하지 않는다 (R-503).
