@@ -199,7 +199,7 @@ def test_unsupported_is_not_guessed():
     plan = {"conditions": [], "unsupported": ["경사가 심한 곳"]}
     r = recommend(PROPS, req(exclusions=[plan]))
     assert not [e for e in r.excluded if e.stage == "exclusion"]
-    assert any("'경사가 심한 곳'은(는) 아직 확인할 수 없어요" in n for n in r.notes)
+    assert any("'경사가 심한 곳'은 아직 확인할 수 없어요" in n for n in r.notes)
 
 
 def test_everything_excluded_by_conditions_is_explained():
