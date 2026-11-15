@@ -2,7 +2,7 @@
 
 - 값을 모르면 빼지 않고 '확인 못 함'으로 센다.
 - 주변 시설 거리가 비어 있고 500m 안 개수가 0 이면 '500m 안에 없음'으로 본다.
-- 확인 문장은 서버가 조건에서 만든다 (Condition.describe / ExclusionPlan.confirm_text).
+- 적용 안내 문장은 서버가 조건에서 만든다 (Condition.describe / ExclusionPlan.applied_text). 확인 질문 없이 바로 적용한다.
 """
 
 from dataclasses import replace
@@ -146,7 +146,7 @@ def test_invalid_conditions_are_rejected(bad):
         Condition(**bad)
 
 
-def test_confirm_text_is_built_from_conditions():
+def test_applied_text_states_changes_first():
     plan = ExclusionPlan(
         source_text="밤에 시끄럽고 오래된 집 싫어",
         conditions=[
@@ -156,34 +156,46 @@ def test_confirm_text_is_built_from_conditions():
         unsupported=["큰 도로 소음"],
         onsite_checks=["방음"],
     )
-    text = plan.confirm_text()
-    assert text.startswith("'밤에 시끄럽고 오래된 집 싫어'를 이렇게")
+    text = plan.applied_text()
+    assert text.startswith("바뀐 것: '밤에 시끄럽고 오래된 집 싫어'에 맞춰 제외 조건 2개를 추가했어요.")
     assert "1. 가장 가까운 술집까지 거리 30m 이하인 매물 제외 (공공데이터 주변 시설)" in text
     assert "2. 건물 연식 15년 초과인 매물 제외 (건축물대장)" in text
     assert "'큰 도로 소음'은 지금 데이터로 확인할 수 없어" in text
-    assert "방음: 벽을 두드려 보고" in text and text.endswith("(네 / 아니요)")
+    assert "방음: 벽을 두드려 보고" in text and "조건 빼 줘" in text
+    assert "할까요" not in text  # 확인 질문 없이 바로 적용
+
+    nothing = ExclusionPlan(source_text="수압 약한 집 싫어", onsite_checks=["수압"])
+    assert nothing.applied_text().startswith("바뀐 것: 없음")
 
 
-def test_preview_counts_and_zero_warning():
+def test_preview_counts_and_zero_blocks():
     props = [prop("A", nearest_m_bar=10, bld_use_approval_year=2000), prop("B", nearest_m_bar=80, bld_use_approval_year=2000),
              prop("C", nearest_m_bar=90, bld_use_approval_year=2022), prop("D", bld_use_approval_year=2022)]
     noise = ExclusionPlan(source_text="시끄러운 곳 싫어", conditions=[Condition(**cond("amenity", "술집", "<=", 30, amenity="bar", metric="nearest_m"))])
     pv = preview_plan(noise, props, CFG)
     assert (pv.before, pv.excluded, pv.remaining, pv.unknown, pv.by_condition) == (4, 1, 3, 1, {"술집": 1})
-    assert "→ 1개 빠짐" in noise.confirm_text(pv) and "4개 중 1개가 빠지고 3개가 남아요" in noise.confirm_text(pv)
+    text = noise.applied_text(pv)
+    assert "→ 1개 빠짐" in text and "4개 중 1개가 빠지고 3개가 남았어요" in text and "확인 못 한 1개" in text
 
-    # 이미 승인된 조건(오래된 건물)으로 A·B 가 빠진 뒤의 매물에 적용한다
+    # 이미 적용된 조건(오래된 건물)으로 A·B 가 빠진 뒤의 매물에 적용한다
     old = ExclusionPlan(conditions=[Condition(**cond("building_field", "오래된", ">", 15, field="building_age_years"))])
     pv2 = preview_plan(noise, props, CFG, existing=[old])
     assert (pv2.before, pv2.excluded, pv2.remaining) == (2, 0, 2)
 
     everything = ExclusionPlan(conditions=[Condition(**cond("listing_field", "모두", ">", 0, field="area_m2"))])
     pv3 = preview_plan(everything, props, CFG)
-    assert pv3.remaining == 0 and "남는 매물이 없어요" in everything.confirm_text(pv3)
+    assert pv3.remaining == 0
+    assert everything.blocked_text(pv3).startswith("이 조건을 모두 적용하면 남는 매물이 없어서 아직 적용하지 않았어요.")
 
     kakao = ExclusionPlan(conditions=[Condition(tool="nearby_count", label="헬스장", keywords=["헬스장"], radius_m=300,
                                                 exclude_if={"op": "<", "value": 1})])
-    assert "적용 후 계산" in kakao.confirm_text(preview_plan(kakao, props, CFG))
+    assert "실시간 검색으로 확인" in kakao.applied_text(preview_plan(kakao, props, CFG))
+
+
+def test_onsite_checks_go_to_notes_and_plan_is_active():
+    r = ExclusionRunner([ExclusionPlan(source_text="수압 약하면 싫어", onsite_checks=["수압"])], None, CFG)
+    assert r.active and r.check(prop()) is None
+    assert any("샤워기" in n for n in r.notes())
 
 
 def test_tool_catalog_lists_fields_from_code():

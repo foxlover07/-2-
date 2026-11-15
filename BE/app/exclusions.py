@@ -342,33 +342,46 @@ class ExclusionPlan(BaseModel):
     def onsite_lines(self) -> list[str]:
         return [f"{k}: {ONSITE_CHECKS[k]}" for k in self.onsite_checks]
 
-    def confirm_text(self, preview: "Preview | None" = None) -> str:
-        """확인 질문 문장. 조건 문장은 Condition.describe() (서버가 만든 것)만 쓴다.
-
-        preview 를 주면 조건마다 빠지는 매물 수와 남는 매물 수를 붙인다. 남는 매물이 0개면 주의를 준다.
-        """
-        src = self.source_text
-        head = f"'{src}'{josa(src, '을', '를')} 이렇게 확인할게요." if src else "이렇게 확인할게요."
-        lines = [head]
+    def _condition_lines(self, preview: "Preview | None") -> list[str]:
+        out = []
         for i, c in enumerate(self.conditions, 1):
             extra = ""
             if preview is not None and c.label in preview.by_condition:
                 extra = f" → {preview.by_condition[c.label]}개 빠짐"
             elif preview is not None and c.uses_places:
-                extra = " → 적용 후 계산 (실시간 검색)"
-            lines.append(f"{i}. {c.describe()}{extra}")
-        if preview is not None and self.conditions:
-            lines.append(f"→ 지금 조건에서 {preview.before}개 중 {preview.excluded}개가 빠지고 {preview.remaining}개가 남아요.")
-            if preview.unknown:
-                lines.append(f"  (정보가 없어 확인 못 한 {preview.unknown}개는 빼지 않아요.)")
-            if preview.remaining == 0:
-                lines.append("⚠️ 이 조건이면 남는 매물이 없어요. 조건을 하나 빼거나 기준을 낮추는 걸 추천해요.")
-        for u in self.unsupported:
-            lines.append(f"- '{u}'{josa(u, '은', '는')} 지금 데이터로 확인할 수 없어 매물을 빼지 않아요.")
+                extra = " → 실시간 검색으로 확인"
+            out.append(f"{i}. {c.describe()}{extra}")
+        return out
+
+    def _tail_lines(self) -> list[str]:
+        out = [f"- '{u}'{josa(u, '은', '는')} 지금 데이터로 확인할 수 없어 매물을 빼지 않았어요." for u in self.unsupported]
         if self.onsite_checks:
-            lines.append("- 집 보러 가면 확인해 보세요:")
-            lines += [f"  · {x}" for x in self.onsite_lines()]
-        lines.append("이렇게 할까요? (네 / 아니요)" if self.conditions else "빼는 매물은 없어요.")
+            out.append("- 집 보러 가면 확인해 보세요:")
+            out += [f"  · {x}" for x in self.onsite_lines()]
+        return out
+
+    def applied_text(self, preview: "Preview | None" = None) -> str:
+        """적용한 뒤 답변 맨 앞에 붙이는 '바뀐 것' 문장 (확인 질문 없이 바로 적용한다 — 11/15 결정).
+
+        조건 문장은 Condition.describe() (서버가 만든 것)만 쓴다. 되돌리는 방법도 알려 준다.
+        """
+        src = f"'{self.source_text}'" if self.source_text else "말씀하신 기호"
+        if not self.conditions:
+            return "\n".join([f"바뀐 것: 없음 ({src}{josa(src, '은', '는')} 데이터로 확인할 수 없어 매물을 빼지 않았어요)",
+                              *self._tail_lines()])
+        lines = [f"바뀐 것: {src}에 맞춰 제외 조건 {len(self.conditions)}개를 추가했어요.", *self._condition_lines(preview)]
+        if preview is not None:
+            lines.append(f"→ {preview.before}개 중 {preview.excluded}개가 빠지고 {preview.remaining}개가 남았어요.")
+            if preview.unknown:
+                lines.append(f"  (정보가 없어 확인 못 한 {preview.unknown}개는 빼지 않았어요.)")
+        lines += self._tail_lines()
+        lines.append("조건을 빼려면 \"○○ 조건 빼 줘\"라고 하거나 생활 프로필의 제외 조건에서 지우면 돼요.")
+        return "\n".join(lines)
+
+    def blocked_text(self, preview: "Preview") -> str:
+        """적용하면 남는 매물이 0개일 때: 적용하지 않고 어느 조건을 풀지 묻는다 (유일하게 되묻는 경우)."""
+        lines = ["이 조건을 모두 적용하면 남는 매물이 없어서 아직 적용하지 않았어요.", *self._condition_lines(preview),
+                 "어떤 조건을 빼거나 기준을 낮출까요?"]
         return "\n".join(lines)
 
 
