@@ -177,7 +177,7 @@ def test_no_coordinates_kept_and_noted():
 def test_no_kakao_key_place_conditions_noted():
     r = recommend(WITH_COORDS, req(exclusions=[NOISE]), searcher=None)
     assert not [e for e in r.excluded if e.stage == "exclusion"]
-    assert any("카카오 키가 없어 장소 조건(술집)" in n for n in r.notes)
+    assert any("장소 데이터(상가정보 파일 또는 카카오 키)가 없어 장소 조건(술집)" in n for n in r.notes)
 
 
 def test_call_limit():
@@ -237,11 +237,12 @@ def test_kakao_places_near_sends_lng_as_x_and_uses_category_endpoint():
 def test_api_accepts_exclusions(monkeypatch):
     import app.routers.recommend as router
 
+    monkeypatch.setenv("PLACE_SEARCH", "kakao")
     monkeypatch.setattr(router, "get_settings", lambda: type("S", (), {"kakao_rest_api_key": None})())
     body = {"department": "컴퓨터공학전공", "grade": 2, "priorities": ["travel", "cost"], "budget_manwon": 200,
             "desired_commute_min": 15, "desired_area_m2": 20, "exclusions": [NOISE]}
     res = TestClient(app).post("/recommend", json=body)
     assert res.status_code == 200
-    assert any("카카오 키가 없어" in n for n in res.json()["notes"])
+    assert any("장소 데이터" in n for n in res.json()["notes"])
     bad = {**body, "exclusions": [{"conditions": [{"tool": "nearby_count", "label": "x", "exclude_if": {"op": ">", "value": 1}}]}]}
     assert TestClient(app).post("/recommend", json=bad).status_code == 422

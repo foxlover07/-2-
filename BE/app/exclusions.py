@@ -149,7 +149,7 @@ class ExclusionRunner:
     # ---- 도구
 
     def _search(self, **kw) -> dict:
-        if self.calls >= self.cfg.kakao_call_limit:
+        if not getattr(self.searcher, "unlimited", False) and self.calls >= self.cfg.kakao_call_limit:
             raise _CallLimit
         self.calls += 1
         assert self.searcher is not None
@@ -254,7 +254,8 @@ class ExclusionRunner:
                 out.append(f"'{item}'은(는) 아직 확인할 수 없어요. 이 조건으로는 매물을 빼지 않았습니다.")
         if self.place_labels_skipped_no_key:
             out.append(
-                f"카카오 키가 없어 장소 조건({', '.join(dict.fromkeys(self.place_labels_skipped_no_key))})을 확인하지 못했습니다."
+                f"장소 데이터(상가정보 파일 또는 카카오 키)가 없어 장소 조건"
+                f"({', '.join(dict.fromkeys(self.place_labels_skipped_no_key))})을 확인하지 못했습니다."
             )
         if self.no_coords:
             out.append(f"좌표가 없어 장소 조건을 확인하지 못한 매물 {len(self.no_coords)}개 (빼지 않았습니다).")
