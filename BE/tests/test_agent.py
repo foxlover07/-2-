@@ -291,3 +291,11 @@ def test_plan_prompt_explains_category_direction():
     """'A만'은 not_in [A] (A 를 남긴다). 1차 평가 e25 에서 방향이 반대로 나와 규칙을 넣었다."""
     p = plan_system()
     assert "op not_in = values 에 없는 값이면 뺀다" in p and '"A만"' in p
+
+
+@pytest.mark.parametrize("first,expected", [("travel", ["travel", "cost"]), ("cost", ["cost", "travel"]), ("area", ["area", "travel"])])
+def test_priority_table_r306(first, expected):
+    """규칙 문서 R-306 표: 기존 이동 시간 > 예산 > 면적에서 1순위만 말했을 때."""
+    cur = AgentProfile(**FULL)  # travel > cost (> area)
+    p, _, _ = tools.apply_changes(cur, ProfileChanges(priority_first=first))
+    assert p.priorities == expected
