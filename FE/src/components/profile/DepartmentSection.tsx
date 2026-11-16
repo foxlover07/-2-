@@ -4,6 +4,8 @@ import { SectionCard } from './SectionCard'
 
 interface DepartmentSectionProps {
   step: number
+  // 시간표 건물과 주 수업 횟수. 있으면 이 칸은 시간표에서 자동으로 채운다 (직접 고르기 숨김)
+  fromTimetable: Array<{ name: string; count: number }>
   departmentBuildings: string[]
   // 학교 건물 전체 (BE GET /recommend/buildings: 도보시간 표 + 건물 기준표). 도보시간이 있는 건물이 먼저
   buildings: string[]
@@ -15,7 +17,15 @@ interface DepartmentSectionProps {
 
 // 수업 듣는 건물 (2026-11-16 사용자 결정: 학과·학과 이름·학년 칸을 없애고 학교 건물 전체에서 고른다).
 // 도보시간이 없는 건물을 고르면 추천할 때 빈 매물만 카카오 도보 경로로 계산한다 (BE app/building_walks).
-export function DepartmentSection({ step, departmentBuildings, buildings, buildingNotes, error, onChange }: DepartmentSectionProps) {
+export function DepartmentSection({
+  step,
+  fromTimetable,
+  departmentBuildings,
+  buildings,
+  buildingNotes,
+  error,
+  onChange,
+}: DepartmentSectionProps) {
   const toggle = (name: string) =>
     onChange({
       departmentBuildings: departmentBuildings.includes(name)
@@ -31,10 +41,28 @@ export function DepartmentSection({ step, departmentBuildings, buildings, buildi
   return (
     <SectionCard
       step={step}
-      title="수업 듣는 건물"
-      description="자주 수업 듣는 건물까지 편도 도보시간이 이동 시간 점수의 가장 큰 부분입니다 · 여러 개를 고르면 평균을 씁니다"
+      title="주로 가는 건물"
+      description="전공 수업·학과 사무실처럼 자주 가는 건물까지 편도 도보시간 (이동 시간 점수의 40%, 여러 개면 평균) · 시간표를 넣으면 시간표 건물로 자동으로 채워집니다"
     >
-      {buildings.length === 0 ? (
+      {fromTimetable.length > 0 ? (
+        // 2026-11-16 사용자 결정 (A안): 시간표와 겹치지 않게, 시간표가 있으면 그 건물로 채우고 직접 고르기는 숨긴다
+        <div>
+          <div className="flex flex-wrap gap-1.5">
+            {fromTimetable.map((b) => (
+              <span
+                key={b.name}
+                className="inline-flex items-center gap-1 rounded-full border border-blue bg-blue-50 px-3 py-1.5 text-sm text-blue"
+              >
+                {b.name}
+                <span className="text-xs text-muted">주 {b.count}회</span>
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            아래 시간표에서 자동으로 채웠어요. 바꾸려면 시간표를 고치세요 (시간표를 비우면 여기서 직접 고를 수 있어요).
+          </p>
+        </div>
+      ) : buildings.length === 0 ? (
         <p className="text-sm text-muted">건물 목록을 불러오는 중이거나, 이 대학의 건물 데이터가 없습니다.</p>
       ) : (
         <fieldset>

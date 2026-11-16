@@ -87,7 +87,7 @@ export function WalkTimeCard({ property }: { property: Property }) {
         ? round1(ttRows.reduce((a, r) => a + (r.walkMin as number) * r.timetableCount, 0) / ttTotal)
         : null
   const summaryLabel =
-    deptVals.length > 0 || ttTotal === 0 ? '내 학과 건물 평균 도보시간' : '내 시간표 건물 평균 도보시간 (수업 횟수 가중)'
+    deptVals.length > 0 || ttTotal === 0 ? '주로 가는 건물 평균 도보시간' : '내 시간표 건물 평균 도보시간 (수업 횟수 가중)'
   const maxWalk = Math.max(0, ...rows.map((r) => r.walkMin ?? 0))
 
   return (
@@ -125,7 +125,7 @@ export function WalkTimeCard({ property }: { property: Property }) {
                 <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                   <span className="flex flex-wrap items-center gap-1.5 font-medium text-text">
                     {r.name}
-                    {r.dept && <Badge tone="blue">학과 건물</Badge>}
+                    {r.dept && r.timetableCount === 0 && <Badge tone="blue">주로 가는 건물</Badge>}
                     {r.timetableCount > 0 && <Badge tone="gray">시간표 주 {r.timetableCount}회</Badge>}
                   </span>
                   <span

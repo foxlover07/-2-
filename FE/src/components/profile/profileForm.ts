@@ -107,7 +107,11 @@ export function checkForm(form: FormState, deptBuildings: string[], ttBuildings:
   }
   let departmentError: string | null = null
   // 학과 이름·학년 칸은 없앴다 (2026-11-16). 예전에 저장된 학과 이름은 그대로 두고 검사하지 않는다
-  const unknown = deptBuildings.length > 0 ? form.departmentBuildings.filter((b) => !deptBuildings.includes(b)) : []
+  // 시간표가 있으면 '주로 가는 건물'은 시간표에서 채우므로 직접 고른 목록은 검사하지 않는다
+  const unknown =
+    deptBuildings.length > 0 && form.timetable.length === 0
+      ? form.departmentBuildings.filter((b) => !deptBuildings.includes(b))
+      : []
   if (unknown.length > 0) {
     // 예전 이름·다른 대학 건물이 저장돼 있을 때. 화면에서 빨간 칩을 눌러 뺄 수 있다
     departmentError = `지금 학교 건물 목록에 없는 건물이 저장돼 있어요: ${unknown.join(', ')}. 눌러서 빼고 다시 골라 주세요.`
@@ -131,12 +135,25 @@ export function checkForm(form: FormState, deptBuildings: string[], ttBuildings:
 }
 
 // 검증을 통과한 폼 → 저장값. savedAt 은 저장할 때 채운다.
+// 시간표 건물 → (건물, 주 수업 횟수), 많이 가는 순 (2026-11-16: 시간표가 있으면 '주로 가는 건물'을 시간표에서 채운다)
+export function timetableBuildingCounts(timetable: Array<{ building: string }>): Array<{ name: string; count: number }> {
+  const m = new Map<string, number>()
+  for (const r of timetable) if (r.building) m.set(r.building, (m.get(r.building) ?? 0) + 1)
+  return [...m.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
+}
+
+// 저장할 '주로 가는 건물': 시간표가 있으면 시간표 건물, 없으면 직접 고른 건물
+export function effectiveBuildings(form: FormState): string[] {
+  const tt = timetableBuildingCounts(form.timetable)
+  return tt.length > 0 ? tt.map((x) => x.name) : form.departmentBuildings
+}
+
 export function toProfile(form: FormState, check: FormCheck): Omit<Profile, 'savedAt' | 'exclusions' | 'frequentPlaces'> {
   const timetable: ClassSlot[] = form.timetable.map(({ day, start, end, building }) => ({ day, start, end, building }))
   const places: FrequentPlace[] = form.places.map(({ area, visitsPerWeek }) => ({ area, visitsPerWeek }))
   return {
     department: departmentName(form),
-    departmentBuildings: form.departmentBuildings,
+    departmentBuildings: effectiveBuildings(form),
     grade: form.grade,
     priorities: form.priorities,
     budgetManwon: check.budget ?? null,

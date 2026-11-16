@@ -8,7 +8,14 @@ import { DepartmentSection } from '../components/profile/DepartmentSection'
 import { PrioritySection } from '../components/profile/PrioritySection'
 import { TimetableSection } from '../components/profile/TimetableSection'
 import { UniversitySection } from '../components/profile/UniversitySection'
-import { checkForm, formSignature, toForm, toProfile, type FormState } from '../components/profile/profileForm'
+import {
+  checkForm,
+  formSignature,
+  timetableBuildingCounts,
+  toForm,
+  toProfile,
+  type FormState,
+} from '../components/profile/profileForm'
 import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { API_URL } from '../services/api'
@@ -130,6 +137,7 @@ export function ProfilePage() {
 
         <DepartmentSection
           step={2}
+          fromTimetable={timetableBuildingCounts(form.timetable)}
           departmentBuildings={form.departmentBuildings}
           buildings={ttBuildings}
           buildingNotes={ttNotes}
