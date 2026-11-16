@@ -4,7 +4,7 @@ import { Card } from '../common'
 interface SectionCardProps {
   step: number
   title: ReactNode
-  description: ReactNode
+  description?: ReactNode
   children: ReactNode
 }
 
@@ -21,7 +21,7 @@ export function SectionCard({ step, title, description, children }: SectionCardP
         </span>
         <div className="min-w-0">
           <h2 className="text-lg font-bold text-navy">{title}</h2>
-          <p className="mt-0.5 text-sm text-muted">{description}</p>
+          {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
         </div>
       </div>
       <div className="mt-5">{children}</div>
