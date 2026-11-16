@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { geocodeAddress, searchSchool, type LatLngLiteral } from '../../services/kakaoGeo'
-import type { KakaoCustomOverlay, KakaoMapInstance, KakaoNamespace } from '../../types/kakao'
+import type { KakaoCustomOverlay, KakaoMapInstance, KakaoMarkerClusterer, KakaoNamespace } from '../../types/kakao'
 import type { Property } from '../../types/property'
 import { getMonthlyFixedCost } from '../../utils/cost'
 import { formatManwonShort } from '../../utils/format'
@@ -24,6 +24,14 @@ interface PropertyMarker {
 }
 
 const SCHOOL_LEVEL = 5
+// 이 레벨부터(더 넓게 보면) 가까운 매물을 숫자 묶음으로 보여 준다. 매물이 수백 개라 가격 라벨이 겹치지 않게.
+const CLUSTER_MIN_LEVEL = 5
+
+// 데이터에 좌표가 있으면 그대로 쓰고(파이프라인에서 Kakao 주소 검색으로 확정한 지번 좌표), 없을 때만 지오코딩한다.
+async function locate(kakao: KakaoNamespace, p: Property): Promise<LatLngLiteral | null> {
+  if (p.latitude !== null && p.longitude !== null) return { lat: p.latitude, lng: p.longitude }
+  return geocodeAddress(kakao, p.address)
+}
 const MARKER_BASE =
   'cursor-pointer whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-bold shadow-md transition-colors'
 const MARKER_NORMAL = 'border-blue bg-white text-blue hover:bg-blue-50'
@@ -40,6 +48,7 @@ export function KakaoMap({ kakao, properties, selectedId, onSelect, university, 
   const mapRef = useRef<KakaoMapInstance | null>(null)
   const markersRef = useRef(new Map<string, PropertyMarker>())
   const schoolOverlayRef = useRef<KakaoCustomOverlay | null>(null)
+  const clustererRef = useRef<KakaoMarkerClusterer | null>(null)
   const centeredForRef = useRef<string | null>(null)
 
   // 콜백·선택값은 ref로 들고 있어 지도를 다시 그리지 않고 최신 값을 쓴다.
@@ -64,7 +73,7 @@ export function KakaoMap({ kakao, properties, selectedId, onSelect, university, 
     async function render() {
       const [school, located] = await Promise.all([
         searchSchool(kakao, university),
-        Promise.all(properties.map(async (p) => ({ p, pos: await geocodeAddress(kakao, p.address) }))),
+        Promise.all(properties.map(async (p) => ({ p, pos: await locate(kakao, p) }))),
       ])
       if (cancelled || !containerRef.current) return
 
@@ -72,6 +81,7 @@ export function KakaoMap({ kakao, properties, selectedId, onSelect, university, 
         Object.fromEntries(located.map(({ p, pos }) => [p.property_id, pos ? 'ok' : 'failed'] as const)),
       )
 
+      clustererRef.current?.clear()
       markersRef.current.forEach((m) => m.overlay.setMap(null))
       markersRef.current.clear()
       schoolOverlayRef.current?.setMap(null)
@@ -88,6 +98,10 @@ export function KakaoMap({ kakao, properties, selectedId, onSelect, university, 
       }
       const map = mapRef.current
       setUnavailable(false)
+      const { MarkerClusterer } = kakao.maps
+      if (!clustererRef.current && MarkerClusterer) {
+        clustererRef.current = new MarkerClusterer({ map, averageCenter: true, minLevel: CLUSTER_MIN_LEVEL, gridSize: 60 })
+      }
 
       if (school) {
         const el = document.createElement('div')
@@ -107,9 +121,10 @@ export function KakaoMap({ kakao, properties, selectedId, onSelect, university, 
         const overlay = new CustomOverlay({ position: toKakao(pos), content: el, yAnchor: 1, clickable: true })
         const marker = { overlay, el, pos }
         applyMarkerStyle(marker, p.property_id === selectedIdRef.current)
-        overlay.setMap(map)
+        if (!clustererRef.current) overlay.setMap(map)
         markersRef.current.set(p.property_id, marker)
       }
+      clustererRef.current?.addMarkers([...markersRef.current.values()].map((m) => m.overlay))
 
       // 대학이 바뀌었을 때만 화면 위치를 다시 잡는다. 필터 변경으로는 이동하지 않는다.
       if (centeredForRef.current !== university) {

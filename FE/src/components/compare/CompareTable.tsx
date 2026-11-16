@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { Footprints, Trophy, Wallet, X } from 'lucide-react'
 import { Badge, PlaceholderImage } from '../common'
 import type { Property } from '../../types/property'
-import { getMonthlyFixedCost, isWithinBudget } from '../../utils/cost'
+import { budgetStatus, getMonthlyFixedCost } from '../../utils/cost'
 import { formatArea, formatManwon, formatMinutes } from '../../utils/format'
 import { getSpotNames, getWalkMin, getWeightedAvgWalk, type SpotVisits } from '../../utils/walk'
 import { cx } from '../../utils/cx'
@@ -147,9 +147,11 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
             <Row
               label={`예산 ${formatManwon(budget)}`}
               cells={cells((p) => {
-                const within = isWithinBudget(p, budget)
-                if (within === null) return <span className="text-muted">비교 불가</span>
-                return within ? <Badge tone="green">예산 이내</Badge> : <Badge tone="gray">예산 초과</Badge>
+                const status = budgetStatus(p, budget)
+                if (status === null) return <span className="text-muted">비교 불가</span>
+                if (status === 'within') return <Badge tone="green">예산 이내</Badge>
+                if (status === 'slack') return <Badge tone="amber">예산 초과 (여유 구간)</Badge>
+                return <Badge tone="gray">예산 초과 · 추천 제외</Badge>
               })}
             />
           )}
@@ -164,7 +166,7 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
                 label={
                   <span className="flex flex-wrap items-center gap-1">
                     {name}
-                    {count > 0 && <Badge tone="blue">주 {count}회</Badge>}
+                    {count > 0 && <Badge tone="blue">학과 건물</Badge>}
                   </span>
                 }
                 cells={cells(
@@ -175,7 +177,7 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
             )
           })}
           <Row
-            label="가중 평균 도보시간"
+            label="학과 건물 평균 도보시간"
             strong
             cells={cells(
               (p) => formatMinutes(getWeightedAvgWalk(p, visits)),
@@ -188,7 +190,7 @@ export function CompareTable({ properties, cheapestId, shortestId, visits, budge
                 <Link to="/profile" className="font-medium text-blue underline">
                   생활 프로필
                 </Link>
-                에서 강의동별 주간 방문 횟수를 입력하면 가중 평균 도보시간과 최단 이동 매물을 알려 드려요.
+                에서 학과 건물을 입력하면 학과 건물 평균 도보시간과 최단 이동 매물을 알려 드려요.
               </td>
             </tr>
           )}

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { Columns3, Plus, TriangleAlert } from 'lucide-react'
-import { Button, Card, EmptyState } from '../components/common'
-import { AiRecommendPlaceholder } from '../components/compare/AiRecommendPlaceholder'
+import { Button, Card, EmptyState, Loading } from '../components/common'
 import { CompareTable } from '../components/compare/CompareTable'
+import { DecisionAnalysis } from '../components/compare/DecisionAnalysis'
+import { RecommendPanel } from '../components/compare/RecommendPanel'
 import { PageContainer } from '../components/layout/PageContainer'
 import { MAX_COMPARE, useCompare } from '../contexts/CompareContext'
 import { useProfile } from '../contexts/ProfileContext'
@@ -11,6 +12,7 @@ import { getProperties } from '../services/propertyService'
 import type { Property } from '../types/property'
 import { findCheapest, getMonthlyFixedCost } from '../utils/cost'
 import { formatManwon, formatMinutes } from '../utils/format'
+import { departmentVisits } from '../utils/profile'
 import { findShortestWalk, getWeightedAvgWalk } from '../utils/walk'
 
 const MIN_COMPARE = 2
@@ -20,7 +22,7 @@ const LINK_BUTTON =
 
 export function ComparePage() {
   const compare = useCompare()
-  const { profile } = useProfile()
+  const { profile, isSaved } = useProfile()
   const [all, setAll] = useState<Property[] | null>(null)
   const [loadError, setLoadError] = useState(false)
 
@@ -42,7 +44,9 @@ export function ComparePage() {
   const missingCount = all ? compare.ids.length - selected.length : 0
 
   const cheapest = findCheapest(selected)
-  const shortest = findShortestWalk(selected, profile.visits)
+  // 학과 건물 평균 도보시간 (강의동 방문 횟수 입력은 통합안에서 없앴다)
+  const visits = departmentVisits(profile)
+  const shortest = findShortestWalk(selected, visits)
 
   if (loadError) {
     return (
@@ -56,7 +60,7 @@ export function ComparePage() {
   if (all === null) {
     return (
       <PageContainer title="매물 비교">
-        <p className="py-12 text-center text-sm text-muted">매물 정보를 불러오는 중입니다…</p>
+        <Loading message="매물 정보를 불러오는 중입니다…" className="py-12" />
       </PageContainer>
     )
   }
@@ -64,8 +68,16 @@ export function ComparePage() {
   return (
     <PageContainer
       title="매물 비교"
-      description={`최대 ${MAX_COMPARE}개 매물의 비용과 강의동까지 도보시간을 나란히 비교합니다.`}
+      description={`조건 기반 추천을 확인하고, 최대 ${MAX_COMPARE}개 매물의 비용과 강의동까지 도보시간을 나란히 비교합니다.`}
     >
+      <div className="mb-5">
+        <RecommendPanel profile={profile} isSaved={isSaved} properties={all} />
+      </div>
+
+      <div className="mb-5">
+        <DecisionAnalysis profile={profile} isSaved={isSaved} properties={all} />
+      </div>
+
       {missingCount > 0 && (
         <p className="mb-4 rounded-control bg-bg px-4 py-2 text-sm text-muted">
           비교 목록 중 {missingCount}개 매물은 데이터에서 찾을 수 없어 제외했습니다.
@@ -104,8 +116,8 @@ export function ComparePage() {
               tone="blue"
               title="최단 이동 매물"
               property={shortest}
-              value={shortest && `가중 평균 ${formatMinutes(getWeightedAvgWalk(shortest, profile.visits))}`}
-              emptyText="생활 프로필에 강의동 방문 횟수를 입력하면 알려 드려요."
+              value={shortest && `학과 건물 평균 ${formatMinutes(getWeightedAvgWalk(shortest, visits))}`}
+              emptyText="생활 프로필에 학과 건물을 입력하면 알려 드려요."
             />
           </div>
 
@@ -114,7 +126,7 @@ export function ComparePage() {
               properties={selected}
               cheapestId={cheapest?.property_id ?? null}
               shortestId={shortest?.property_id ?? null}
-              visits={profile.visits}
+              visits={visits}
               budget={profile.budgetManwon}
               onRemove={compare.remove}
             />
@@ -139,8 +151,6 @@ export function ComparePage() {
               )}
             </div>
           </div>
-
-          <AiRecommendPlaceholder />
         </div>
       )}
     </PageContainer>

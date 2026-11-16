@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Building2, TriangleAlert } from 'lucide-react'
-import { EmptyState } from '../components/common'
+import { EmptyState, Loading } from '../components/common'
 import { CompareBar } from '../components/explore/CompareBar'
 import { FilterPanel } from '../components/explore/FilterPanel'
 import { PropertyList } from '../components/explore/PropertyList'
 import { MapView, type LocationStatus } from '../components/map/MapView'
 import { getUniversityLabel } from '../constants/universities'
 import { useCompare } from '../contexts/CompareContext'
+import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { getProperties } from '../services/propertyService'
 import type { Property } from '../types/property'
@@ -62,7 +63,13 @@ interface ExploreViewProps {
 }
 
 function ExploreView({ university, load, properties, listPaddingBottom }: ExploreViewProps) {
-  const [filters, setFilters] = useState(EMPTY_FILTERS)
+  // 생활 프로필의 유지비·보증금 상한을 기본값으로 쓴다 (초기화하면 조건 없음).
+  const { profile } = useProfile()
+  const [filters, setFilters] = useState(() => ({
+    ...EMPTY_FILTERS,
+    costMax: profile.budgetManwon,
+    depositMax: profile.depositBudgetManwon,
+  }))
   const [sortKey, setSortKey] = useState<SortKey>('cost')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [locationStatus, setLocationStatus] = useState<Record<string, LocationStatus>>({})
@@ -80,7 +87,7 @@ function ExploreView({ university, load, properties, listPaddingBottom }: Explor
 
   let listContent: ReactNode
   if (load.kind === 'loading') {
-    listContent = <p className="p-6 text-center text-sm text-muted">매물을 불러오는 중입니다…</p>
+    listContent = <Loading message="매물을 불러오는 중입니다…" className="p-6" />
   } else if (load.kind === 'error') {
     listContent = <EmptyState icon={TriangleAlert} title="매물을 불러오지 못했습니다" description="잠시 후 다시 시도해 주세요." />
   } else if (properties.length === 0) {

@@ -1,15 +1,23 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-navy: #14213d;
-  --color-blue: #2f5bea;
-  --color-blue-50: #eef3ff;
+  /* 2026-11-15 보라색 디자인 전환: 클래스 이름(navy·blue)은 그대로 두고 값만 보라 계열로 바꿨다.
+     navy = 진한 보라(제목·강조 배경), blue = 주 보라(버튼·링크·막대), blue-50 = 옅은 보라(배경) */
+  --color-navy: #2b1a5e;
+  --color-blue: #6d4ae6;
+  --color-blue-50: #f2eefe;
   --color-text: #1a1f2c;
   --color-muted: #6b7280;
   --color-border: #e5e8ee;
   --color-bg: #f7f8fa;
   --color-green: #0f9d6b;
   --color-green-50: #e7f7f0;
+  /* 안내·주의 (데이터 준비 중, notes) */
+  --color-amber: #b45309;
+  --color-amber-50: #fff7e6;
+  /* 예산 초과 등 경고 */
+  --color-red: #d92d20;
+  --color-red-50: #fdecea;
 
   --font-sans: 'Noto Sans KR', system-ui, sans-serif;
 

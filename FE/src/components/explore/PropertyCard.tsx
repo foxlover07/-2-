@@ -6,6 +6,7 @@ import type { Property } from '../../types/property'
 import { getMonthlyFixedCost } from '../../utils/cost'
 import { formatArea, formatManwon } from '../../utils/format'
 import { cx } from '../../utils/cx'
+import { DUPLICATE_HINT } from '../../utils/duplicates'
 
 interface PropertyCardProps {
   property: Property
@@ -13,6 +14,7 @@ interface PropertyCardProps {
   locationFailed: boolean
   compareChecked: boolean
   compareDisabled: boolean
+  duplicateCount?: number // 같은 집일 수 있는 매물 수 (2 이상이면 배지)
   onSelect: () => void
   onToggleCompare: () => void
   ref?: Ref<HTMLDivElement>
@@ -24,6 +26,7 @@ export function PropertyCard({
   locationFailed,
   compareChecked,
   compareDisabled,
+  duplicateCount = 0,
   onSelect,
   onToggleCompare,
   ref,
@@ -43,6 +46,11 @@ export function PropertyCard({
           <div className="flex items-start justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1">
               <Badge tone="blue">{p.property_type}</Badge>
+              {duplicateCount > 1 && (
+                <Badge tone="gray" title={DUPLICATE_HINT}>
+                  같은 집일 수 있음 · {duplicateCount}건
+                </Badge>
+              )}
               {locationFailed && (
                 <Badge tone="gray">
                   <MapPinOff className="size-3" aria-hidden />

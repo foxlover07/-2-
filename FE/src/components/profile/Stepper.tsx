@@ -9,12 +9,13 @@ interface StepperProps {
   label: string
   unit?: string
   disabled?: boolean
+  step?: number
 }
 
 const BUTTON =
   'flex size-8 items-center justify-center rounded-control border border-border bg-white text-text transition-colors hover:bg-bg disabled:cursor-not-allowed disabled:text-border disabled:hover:bg-white'
 
-export function Stepper({ value, min, max, onChange, label, unit = '', disabled = false }: StepperProps) {
+export function Stepper({ value, min, max, onChange, label, unit = '', disabled = false, step = 1 }: StepperProps) {
   return (
     <div className={cx('flex items-center gap-2', disabled && 'opacity-50')}>
       <button
@@ -22,7 +23,7 @@ export function Stepper({ value, min, max, onChange, label, unit = '', disabled 
         className={BUTTON}
         aria-label={`${label} 줄이기`}
         disabled={disabled || value <= min}
-        onClick={() => onChange(Math.max(min, value - 1))}
+        onClick={() => onChange(Math.max(min, value - step))}
       >
         <Minus className="size-4" aria-hidden />
       </button>
@@ -35,7 +36,7 @@ export function Stepper({ value, min, max, onChange, label, unit = '', disabled 
         className={BUTTON}
         aria-label={`${label} 늘리기`}
         disabled={disabled || value >= max}
-        onClick={() => onChange(Math.min(max, value + 1))}
+        onClick={() => onChange(Math.min(max, value + step))}
       >
         <Plus className="size-4" aria-hidden />
       </button>

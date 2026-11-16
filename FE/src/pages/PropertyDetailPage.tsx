@@ -1,14 +1,23 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { ArrowLeft, Check, ExternalLink, Plus, SearchX, TriangleAlert } from 'lucide-react'
-import { Badge, Button, Card, EmptyState, PlaceholderImage } from '../components/common'
+import { Badge, Button, Card, EmptyState, Loading, PlaceholderImage } from '../components/common'
+import {
+  AmenitiesCard,
+  BuildingCard,
+  ContractCheckCard,
+  MarketCompareCard,
+  RelatedPoliciesCard,
+} from '../components/detail/NearbyCards'
 import { WalkTimeCard } from '../components/detail/WalkTimeCard'
+import { WhyRankCard } from '../components/detail/WhyRankCard'
 import { PageContainer } from '../components/layout/PageContainer'
 import { MAX_COMPARE, useCompare } from '../contexts/CompareContext'
 import { useProfile } from '../contexts/ProfileContext'
 import { getPropertyById } from '../services/propertyService'
 import type { Property } from '../types/property'
-import { getMonthlyFixedCost, isWithinBudget } from '../utils/cost'
+import { budgetStatus, getMonthlyFixedCost } from '../utils/cost'
+import { MONTHLY_BUDGET_SLACK_MANWON } from '../constants/recommend'
 import { formatArea, formatManwon, NO_INFO } from '../utils/format'
 
 // 어떤 ID에 대한 결과인지 함께 들고 있어, ID가 바뀌면 렌더 중에 로딩으로 판단한다.
@@ -32,7 +41,7 @@ export function PropertyDetailPage() {
   if (load === null) {
     return (
       <PageContainer>
-        <p className="py-12 text-center text-sm text-muted">매물 정보를 불러오는 중입니다…</p>
+        <Loading message="매물 정보를 불러오는 중입니다…" className="py-12" />
       </PageContainer>
     )
   }
@@ -83,7 +92,15 @@ function PropertyDetail({ property: p }: { property: Property }) {
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge tone="blue">{p.property_type}</Badge>
                 <Badge tone="gray">{p.property_id}</Badge>
+                {p.listing_status === 'unavailable' && <Badge tone="red">거래 종료</Badge>}
               </div>
+              {p.listing_status === 'unavailable' && (
+                <p className="mt-2 flex items-start gap-1.5 rounded-control bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  원 사이트에서 더 이상 거래할 수 없는 매물입니다 (만료·거래완료·숨김,{' '}
+                  {p.listing_status_checked_at?.slice(0, 10) ?? '날짜 미상'} 확인). 추천·지도 목록에서는 뺐습니다.
+                </p>
+              )}
               <h1 className="mt-2 text-xl font-bold break-keep text-navy md:text-2xl">{p.address}</h1>
               <p className="mt-1 text-sm text-muted">{p.university} 인근</p>
             </div>
@@ -95,11 +112,22 @@ function PropertyDetail({ property: p }: { property: Property }) {
               <InfoRow label="주소">{p.address}</InfoRow>
               <InfoRow label="전용면적">{formatArea(p.area_m2)}</InfoRow>
               <InfoRow label="주거 형태">{p.property_type}</InfoRow>
-              <InfoRow label="매물 확인일">{p.listing_checked_at ?? NO_INFO}</InfoRow>
+              <InfoRow label="매물 수집일">{p.listing_checked_at?.slice(0, 10) ?? NO_INFO}</InfoRow>
+              <InfoRow label="거래 가능 재확인">
+                {p.listing_status_checked_at
+                  ? `${p.listing_status === 'active' ? '광고 중' : '거래 종료'} (${p.listing_status_checked_at.slice(0, 10)})`
+                  : '아직 확인 안 함'}
+              </InfoRow>
             </dl>
           </Card>
 
-          <WalkTimeCard property={p} visits={profile.visits} />
+          <WhyRankCard propertyId={p.property_id} />
+          <WalkTimeCard property={p} />
+          <BuildingCard propertyId={p.property_id} />
+          <MarketCompareCard propertyId={p.property_id} />
+          <ContractCheckCard propertyId={p.property_id} />
+          <RelatedPoliciesCard propertyId={p.property_id} />
+          <AmenitiesCard propertyId={p.property_id} />
         </div>
 
         <div className="flex flex-col gap-5 lg:sticky lg:top-24 lg:self-start">
@@ -113,7 +141,7 @@ function PropertyDetail({ property: p }: { property: Property }) {
 
 function CostCard({ property: p, budget }: { property: Property; budget: number | null }) {
   const cost = getMonthlyFixedCost(p)
-  const within = budget === null ? null : isWithinBudget(p, budget)
+  const status = budget === null ? null : budgetStatus(p, budget)
 
   return (
     <Card>
@@ -130,17 +158,22 @@ function CostCard({ property: p, budget }: { property: Property; budget: number 
               </Link>
               에서 월 예산을 입력하면 예산 이내 여부를 알려 드려요.
             </p>
-          ) : within === null ? (
+          ) : status === null ? (
             <p className="text-xs text-white/70">비용 정보가 없어 예산과 비교할 수 없습니다.</p>
-          ) : within ? (
+          ) : status === 'within' ? (
             <Badge tone="green">
               <Check className="size-3" aria-hidden />
               예산 이내 (예산 {formatManwon(budget)})
             </Badge>
+          ) : status === 'slack' ? (
+            <Badge tone="amber">
+              <TriangleAlert className="size-3" aria-hidden />
+              예산 초과 · 여유 {MONTHLY_BUDGET_SLACK_MANWON}만 원 안 (예산 {formatManwon(budget)})
+            </Badge>
           ) : (
             <Badge tone="gray" className="bg-white text-navy">
               <TriangleAlert className="size-3" aria-hidden />
-              예산 초과 (예산 {formatManwon(budget)})
+              예산 + {MONTHLY_BUDGET_SLACK_MANWON}만 원 초과 · 추천 제외 (예산 {formatManwon(budget)})
             </Badge>
           )}
         </div>
@@ -188,7 +221,7 @@ function ActionCard({ property: p }: { property: Property }) {
           rel="noopener noreferrer"
           className="inline-flex h-10 items-center justify-center gap-1.5 rounded-control border border-border bg-white px-4 text-sm font-medium text-text hover:bg-bg"
         >
-          네이버 부동산에서 원본 보기
+          {sourceSiteLabel(p.source_url)}에서 원본 보기
           <ExternalLink className="size-4" aria-hidden />
         </a>
       ) : (
@@ -196,4 +229,19 @@ function ActionCard({ property: p }: { property: Property }) {
       )}
     </Card>
   )
+}
+
+// 원본 링크의 사이트 이름 (링크 주소는 받은 그대로 쓰고, 표시 이름만 고른다)
+function sourceSiteLabel(url: string): string {
+  let host = ''
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return '원본 사이트'
+  }
+  if (host.endsWith('land.naver.com')) return '네이버 부동산'
+  if (host.endsWith('zigbang.com')) return '직방'
+  if (host.endsWith('dabangapp.com')) return '다방'
+  if (host.endsWith('daangn.com')) return '당근'
+  return '원본 사이트'
 }

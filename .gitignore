@@ -7,6 +7,11 @@ dist/
 !.env.example
 *.local
 
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+
 # OS / 에디터
 .DS_Store
 Thumbs.db
@@ -20,3 +25,47 @@ DB/*.bak.csv
 
 # 아이콘 원본 (FE/public/house.png로 사용)
 /house.png
+
+# 키·인증 정보 (.env* 는 위 '공통' 에서 이미 제외, .env.example 만 커밋)
+*.pem
+*.key
+secrets/
+
+# 로컬 Python 가상환경 (저장소 루트의 home/)
+home/
+
+# 데이터: 외부 API·수집 원본과 그 가공 결과는 커밋하지 않는다
+#   (Kakao 응답 저장·재배포 정책, jibsa 비공식 수집 데이터 → 공개 저장소 금지)
+#   다시 만들려면 BE/pipeline/* 스크립트를 실행한다.
+#   DB/poc_ewha.csv 는 기존부터 추적 중인 팀 데이터라 그대로 둔다.
+DB/raw/
+DB/routes/
+DB/staging/
+DB/ref/
+DB/experimental/
+
+# 참고 논문 PDF (로컬 보관)
+/*.pdf
+
+# 디자인 시안 등 압축 파일 (로컬 보관)
+*.zip
+
+# 평가·분석 결과 (로컬 수집 매물 ID 포함, 커밋 금지)
+BE/eval/results/
+
+# Syntitan 업로드용 내보내기 (수집 데이터 포함, 커밋 금지)
+DB/export/
+
+# 에이전트 턴 기록 (사용자 메시지가 들어 있어 커밋하지 않는다)
+BE/logs/
+
+# 사용자 시간표 캡처 (교수명 등 개인 정보 포함, 로컬 테스트용)
+BE/tests/fixtures/*.png
+
+# 저장소 루트의 이미지 (개인 캡처·시안 등 로컬 보관. 앱 이미지는 FE/public 에 둔다)
+/*.png
+
+# Claude Code 개인 설정 (커밋 안 함)
+.claude/settings.local.json
+
+BE/.deploy_data/

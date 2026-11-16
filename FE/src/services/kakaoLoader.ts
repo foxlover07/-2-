@@ -16,7 +16,7 @@ export function loadKakaoMaps(appKey: string): Promise<KakaoNamespace> {
     }
 
     const script = document.createElement('script')
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(appKey)}&autoload=false&libraries=services`
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(appKey)}&autoload=false&libraries=services,clusterer`
     script.async = true
     script.onload = () => {
       const kakao = window.kakao

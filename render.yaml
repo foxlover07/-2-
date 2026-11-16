@@ -1,0 +1,20 @@
+# Render Blueprint — BE (FastAPI). Render 대시보드 > New > Blueprint 에서 이 저장소를 고르면 읽는다.
+# 비밀 값(sync: false)은 대시보드에서 직접 입력한다. 저장소에 키를 넣지 않는다.
+services:
+  - type: web
+    name: home-poc-be
+    runtime: python
+    plan: free
+    rootDir: BE
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    # --no-dev: uv run 이 시작할 때 dev 의존성(pytest 등)을 다시 설치하지 않게 한다
+    startCommand: uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      # FE 배포 주소와 로컬 개발 주소 (쉼표로 구분). 예: https://home-poc.vercel.app,http://localhost:5173
+      - key: CORS_ORIGINS
+        sync: false
+      - key: KAKAO_REST_API_KEY
+        sync: false

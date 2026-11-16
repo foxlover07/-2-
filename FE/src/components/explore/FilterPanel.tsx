@@ -89,22 +89,19 @@ export function FilterPanel({ filters, bounds, onChange, onReset }: FilterPanelP
       </div>
 
       <div className={cx('mt-5 flex-col gap-6', open ? 'flex' : 'hidden lg:flex')}>
-        <RangeField
-          label="월세"
-          unit="만원"
-          range={bounds.rent}
-          min={filters.rentMin}
-          max={filters.rentMax}
-          onChange={(rentMin, rentMax) => set({ rentMin, rentMax })}
-        />
-        <RangeField
-          label="관리비"
-          unit="만원"
-          range={bounds.maintenance}
-          min={filters.maintenanceMin}
-          max={filters.maintenanceMax}
-          onChange={(maintenanceMin, maintenanceMax) => set({ maintenanceMin, maintenanceMax })}
-        />
+        <fieldset>
+          <legend className="mb-1.5 text-sm font-medium text-text">보증금 상한</legend>
+          <Input
+            aria-label="보증금 상한"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            placeholder={bounds.deposit ? `제한 없음 (최대 ${bounds.deposit.max})` : '제한 없음'}
+            value={filters.depositMax ?? ''}
+            onChange={(e) => set({ depositMax: parseNumber(e.target.value) })}
+            suffix="만원"
+          />
+        </fieldset>
         <RangeField
           label="전용면적"
           unit="㎡"
@@ -143,7 +140,7 @@ export function FilterPanel({ filters, bounds, onChange, onReset }: FilterPanelP
 
         {costRange && (
           <Slider
-            label="월 고정비 상한"
+            label="유지비 상한"
             min={costRange.min}
             max={costRange.max}
             value={filters.costMax ?? costRange.max}
@@ -153,7 +150,7 @@ export function FilterPanel({ filters, bounds, onChange, onReset }: FilterPanelP
             maxLabel={`${costRange.max}만원`}
           />
         )}
-        <p className="-mt-3 text-xs text-muted">월 고정비 = 월세 + 관리비</p>
+        <p className="-mt-3 text-xs text-muted">유지비 = 월세 + 관리비 · 관리비 정보가 없는 매물은 상한을 걸면 빠집니다</p>
       </div>
     </div>
   )
