@@ -38,4 +38,9 @@ def unpack_if_configured(bundle: Path = BUNDLE, out: Path = OUT) -> bool:
     os.environ["DATA_CSV_PATH"] = ",".join(str(out / f) for f in files if "_candidates_" in f)
     os.environ["WALK_TABLE_PATH"] = ",".join(str(out / f) for f in files if "walk_times" in f)
     os.environ["BUILDING_REF_DIR"] = str(out)
+    # 참고 정보 (공공데이터 미리 수집분): 실거래·건축물대장·상가정보. 묶음에 있을 때만
+    for env, part in (("MARKET_TX_PATH", "rent_tx_"), ("BUILDING_TITLES_PATH", "building_titles_"), ("STORES_PATH", "stores_")):
+        hit = [str(out / f) for f in files if f.startswith(part)]
+        if hit:
+            os.environ[env] = ",".join(hit)
     return True

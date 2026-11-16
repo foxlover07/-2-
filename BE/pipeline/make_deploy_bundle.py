@@ -26,17 +26,20 @@ def main() -> None:
     a = ap.parse_args()
     src = Path(a.folder)
     files = sorted(p for p in src.glob("*.csv")
-                   if "_candidates_" in p.name or "walk_times" in p.name or p.name.endswith("_buildings.csv"))
+                   if "_candidates_" in p.name or "walk_times" in p.name or p.name.endswith("_buildings.csv")
+                   or p.name.startswith(("rent_tx_", "building_titles_", "stores_")))
     if not files:
         raise SystemExit(f"{src} 에 넣을 csv 가 없습니다.")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for f in files:
             z.write(f, f.name)
-    key = Fernet.generate_key()
+    kf = Path(a.key_file)
+    # 키 파일이 이미 있으면 그 키를 다시 쓴다 (배포 환경 변수 DATA_BUNDLE_KEY 를 바꾸지 않아도 되게)
+    key = kf.read_text(encoding="utf-8").strip().encode() if kf.exists() and kf.read_text(encoding="utf-8").strip() else Fernet.generate_key()
     BUNDLE.parent.mkdir(parents=True, exist_ok=True)
     BUNDLE.write_bytes(Fernet(key).encrypt(buf.getvalue()))
-    Path(a.key_file).write_text(key.decode(), encoding="utf-8")
+    kf.write_text(key.decode(), encoding="utf-8")
     print(f"{len(files)}개 파일 → {BUNDLE} ({BUNDLE.stat().st_size // 1024}KB). 키는 {a.key_file} 에만 저장했습니다.")
 
 
