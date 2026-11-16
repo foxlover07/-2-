@@ -84,6 +84,7 @@ SIDO_CODES = {
     "11": "서울", "26": "부산", "27": "대구", "28": "인천", "29": "광주", "30": "대전", "31": "울산", "36": "세종",
     "41": "경기", "42": "강원", "51": "강원", "43": "충북", "44": "충남", "45": "전북", "52": "전북", "46": "전남",
     "47": "경북", "48": "경남", "50": "제주",
+    "12": "전남광주",  # 2026 전남광주통합특별시 (온통청년 응답 2026-11-16 확인: 옛 29·46 대신 12)
 }
 ALL_SIDO = set(SIDO_CODES.values())
 _SIDO_NAME = re.compile(r"^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청북|충북|충청남|충남|전라북|전북|전북특별자치|"
@@ -162,7 +163,8 @@ def region_name(row: dict) -> str | None:
     codes = [c.strip() for c in (_pick(row, "region_codes") or "").split(",") if c.strip()]
     sido = {SIDO_CODES[c[:2]] for c in codes if c[:2] in SIDO_CODES}
     if sido:
-        return "전국" if sido >= ALL_SIDO else ", ".join(sorted(sido))
+        # 시·도 코드가 바뀐 곳(2026 전남광주통합특별시 등)이 있어 15곳 이상이면 전국으로 본다
+        return "전국" if sido >= ALL_SIDO or len(sido) >= 15 else ", ".join(sorted(sido))
     org = _pick(row, "region")
     return org if org and _SIDO_NAME.match(org) else None
 

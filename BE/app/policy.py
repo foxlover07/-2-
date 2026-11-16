@@ -121,9 +121,15 @@ def _path() -> Path | None:
     if override:
         p = Path(override)
         return p if p.is_absolute() else (REPO_ROOT / "BE" / p).resolve()
-    files = sorted((REPO_ROOT / "DB" / "staging").glob("policies_*.json"))
+    # 수집 보고서(policies_<ts>.report.json)는 정책 목록이 아니다
+    files = sorted(f for f in (REPO_ROOT / "DB" / "staging").glob("policies_*.json") if not f.name.endswith(".report.json"))
     if files:
         return files[-1]
+    # 배포: 커밋해 둔 온통청년 수집 결과 (DB/staging 은 커밋하지 않음). 공공 API 데이터
+    published = sorted(f for f in (REPO_ROOT / "DB" / "reference").glob("policies_youthcenter_*.json")
+                       if not f.name.endswith(".report.json"))
+    if published:
+        return published[-1]
     # 온통청년 API 데이터가 없을 때만 임시 목록 (공식 페이지를 직접 확인해 옮겨 적은 것)
     return _curated_path() if _curated_path().exists() else None
 
@@ -439,5 +445,7 @@ def related_policies_for(p, items: tuple[PolicyItem, ...] | None = None, limit: 
     picked = [it for it in items if region_match(it.region, regions) and any(t in want for t in it.housing_types)]
     # 이 형태를 직접 가리키는 정책(월세/전세)을 먼저, 그다음 보증금 관련. 같은 순위면 지역 정책을 먼저
     picked.sort(key=lambda it: (kind not in it.housing_types, not it.region or "전국" in (it.region or ""), it.name))
+    seen: set[str] = set()  # 같은 이름의 정책(기관만 다른 중복 등록)은 하나만
+    picked = [it for it in picked if not (it.name.replace(" ", "") in seen or seen.add(it.name.replace(" ", "")))]
     fetched = max((it.fetched_at for it in items if it.fetched_at), default=None)
     return RelatedPolicies(**base, available=True, items=picked[:limit], fetched_at=fetched)

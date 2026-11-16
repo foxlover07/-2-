@@ -4,7 +4,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import agent, analysis, market, properties, recommend, timetable
+from app.deploy_bundle import unpack_if_configured
+
+# 배포: 암호화한 데이터 묶음을 라우터(데이터 경로를 읽는 모듈)보다 먼저 푼다. 키가 없으면 아무것도 안 함
+unpack_if_configured()
+
+from app.routers import agent, analysis, market, properties, recommend, timetable  # noqa: E402
 
 load_dotenv()
 

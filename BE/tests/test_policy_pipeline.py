@@ -143,3 +143,25 @@ def test_related_policies_api():
     b = TestClient(app).get(f"/market/related-policies/{pid}").json()
     assert b["rent_kind"] == "월세" and all(set(i["housing_types"]) & {"월세", "보증금"} for i in b["items"])
     assert TestClient(app).get("/market/related-policies/NOPE").status_code == 404
+
+
+def test_new_province_code_and_nationwide_rule():
+    assert cp.region_name({"zipCd": "12780"}) == "전남광주"  # 2026 전남광주통합특별시
+    fifteen = [c for c in cp.SIDO_CODES if c not in ("29", "46", "12", "51", "52")]  # 15곳
+    assert cp.region_name({"zipCd": ",".join(f"{c}110" for c in fifteen)}) == "전국"
+
+
+def test_loader_skips_report_file(tmp_path, monkeypatch):
+    import app.policy as pol
+
+    st = tmp_path / "DB" / "staging"
+    st.mkdir(parents=True)
+    (st / "policies_20261116T1.json").write_text('{"items": [{"policy_id": "A", "name": "청년월세 지원"}]}', encoding="utf-8")
+    (st / "policies_20261116T1.report.json").write_text('{"ts": "x"}', encoding="utf-8")  # 이름순으로 뒤에 온다
+    monkeypatch.setattr(pol, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(pol, "_read", lambda k: None)
+    pol.load_policies.cache_clear()
+    try:
+        assert [i.name for i in pol.load_policies()] == ["청년월세 지원"]
+    finally:
+        pol.load_policies.cache_clear()

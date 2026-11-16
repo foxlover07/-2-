@@ -67,3 +67,5 @@ BE/tests/fixtures/*.png
 
 # Claude Code 개인 설정 (커밋 안 함)
 .claude/settings.local.json
+
+BE/.deploy_data/
