@@ -577,7 +577,7 @@ class ProviderChain:
             self.last_model = f"{name}:{getattr(llm, 'last_model', None)}"
             return out
         assert last is not None
-        raise LLMError(f"모든 LLM 공급자 실패 ({', '.join(n for n, _ in order)})", last.kind)
+        raise LLMError(f"모든 LLM 공급자 실패 ({', '.join(n for n, _ in order)})", last.kind) from last
 
     def extract(self, message: str, context: dict[str, Any]) -> TurnExtraction:
         return self._call("extract", message, context)

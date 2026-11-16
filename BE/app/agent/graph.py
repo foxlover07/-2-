@@ -74,6 +74,7 @@ class AgentState(TypedDict, total=False):
     blocked: str | None
     status: str
     llm_error_kind: str | None  # busy · quota · auth · not_found · bad_response · other
+    llm_error_detail: str | None  # 원인 사슬 (키는 가림), 배포 진단용
     response: str
     lead_text: str | None       # 답변 맨 앞에 붙는 서버 문장 ('바뀐 것' — 제외 조건을 바로 적용했을 때)
     # 턴 기록 (trace): 거친 노드와 걸린 시간, 사용 모델, 설명 출처
@@ -127,7 +128,7 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         out: AgentState = {
             "intent": None, "extraction": None, "notes": [], "pending_required_fields": [],
             "scenario_profile": None, "scenario_recommendation": None, "comparison": None,
-            "analysis": None, "analysis_facts": None, "policy": None, "profile_changed": False, "blocked": None, "status": "ok", "llm_error_kind": None, "response": "", "trace": None, "lead_text": None,
+            "analysis": None, "analysis_facts": None, "policy": None, "profile_changed": False, "blocked": None, "status": "ok", "llm_error_kind": None, "llm_error_detail": None, "response": "", "trace": None, "lead_text": None,
             "pending_commit": None, "confirm_question": None, "confirm_declined": False,
         }
         # FE 에 저장된 프로필이 오면 이번 턴의 현재 조건으로 쓴다 (폼과 챗봇이 같은 조건)
@@ -153,7 +154,10 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
             out.update(status="llm_unavailable", notes=[str(e)])
             return out
         except LLMError as e:
-            out.update(status="llm_error", notes=[str(e)], llm_error_kind=getattr(e, "kind", "other"))
+            detail = llm_error_detail(e)
+            print(f"[agent] LLM 오류 ({getattr(e, 'kind', 'other')}): {detail}", flush=True)  # 배포 로그용 (키는 가림)
+            out.update(status="llm_error", notes=[str(e)], llm_error_kind=getattr(e, "kind", "other"),
+                       llm_error_detail=detail)
             return out
         msg = state["user_message"]
         if "시간표" in msg and any(w in msg for w in PHOTO_WORDS):  # 대화창에서는 사진을 받지 않는다 (R-202)
@@ -800,6 +804,19 @@ TOOLS_BY_NODE = {"update_profile": "building·profile 검증", "confirm": "사�
                  "validate": "result 검증"}
 
 
+_SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{24,}")
+
+
+def llm_error_detail(e: BaseException) -> str:
+    """LLM 오류의 원인 사슬 (예외 종류: 메시지) — 배포에서 원인을 보려고. 키처럼 긴 문자열은 가린다."""
+    parts: list[str] = []
+    cur: BaseException | None = e
+    while cur is not None and len(parts) < 4:
+        parts.append(f"{type(cur).__name__}: {str(cur)[:200]}")
+        cur = cur.__cause__ or cur.__context__
+    return _SECRET_RE.sub("***", " <- ".join(parts))[:700]
+
+
 def make_trace(state: AgentState, explanation_source: str, explain_model: str | None) -> dict[str, Any]:
     """한 턴의 기록: 어떤 요청이 어떤 의도로 읽혀 어떤 도구로 처리됐는지 (CLAUDE.md 7장)."""
     steps = list(state.get("trace_steps", []))
@@ -814,6 +831,7 @@ def make_trace(state: AgentState, explanation_source: str, explain_model: str | 
         "unsupported": ex.get("unsupported") or [],
         "status": state.get("status"),
         "llm_error_kind": state.get("llm_error_kind"),
+        "llm_error_detail": state.get("llm_error_detail"),
         "nodes": steps,
         # update_profile 은 조건 추출이 성공했을 때만 실제로 일한다 (실패 턴은 건너뜀)
         "tools": [TOOLS_BY_NODE[s["node"]] for s in steps

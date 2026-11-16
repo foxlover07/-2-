@@ -21,9 +21,19 @@ class Settings:
     db_dir: Path
 
 
+def _unquote(v: str | None) -> str | None:
+    """배포 대시보드에 .env 값을 따옴표째 붙여 넣은 경우 ('abc' / "abc") 따옴표를 뗀다."""
+    if v is None:
+        return None
+    s = v.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "'\"":
+        s = s[1:-1]
+    return s
+
+
 def _read(name: str) -> str | None:
     if os.getenv(name):
-        return os.getenv(name)
+        return _unquote(os.getenv(name))
     value = None
     for env_file in (BE_DIR / ".env", BE_DIR / ".env.local"):
         if env_file.exists():
