@@ -368,7 +368,13 @@ def align_with_grid(blocks: list[list[tuple[float, float]]], slots: list[dict]) 
         return slots, ["칸 위치를 찾지 못해 AI 가 읽은 시각을 그대로 썼습니다. 시간을 확인해 주세요."]
 
     def block_min(c: int, b: tuple[float, float], start_hour: int) -> tuple[int, int]:
-        return _snap((start_hour + b[0]) * 60), _snap((start_hour + b[1]) * 60)
+        start, end = _snap((start_hour + b[0]) * 60), _snap((start_hour + b[1]) * 60)
+        # 칸 테두리·글자 때문에 시작이 몇 픽셀 밀린다 (15:05, 15:10). 수업 시작은 정각·30분이 대부분이라
+        # 10분 이내면 맞춘다. 끝 시각(:15·:45 로 끝나는 75분 수업 등)은 건드리지 않는다
+        near = round(start / 30) * 30
+        if abs(start - near) <= 10:
+            start = near
+        return start, end
 
     # 첫 열의 요일(d0)과 첫 가로선 시각(h0): AI 칸과의 시작·끝 차이 합이 가장 작은 값
     best: tuple[float, int, int] | None = None

@@ -197,3 +197,15 @@ def test_align_falls_back_when_grid_disagrees():
     ai = [{"day": "월", "start": "09:00", "end": "10:00", "building_text": "학109", "course": None}]
     out, notes = align_with_grid([[]], ai)  # 격자 칸이 없다
     assert out == ai and "그대로" in notes[0]
+
+
+def test_align_snaps_start_to_half_hour():
+    """칸 테두리 때문에 15:05·15:10 으로 밀린 시작은 15:00 으로, 끝(:15·:45)은 그대로 (11-16 고대 캡처)."""
+    from app.timetable_ocr import align_with_grid
+
+    blocks = [[(6.0 + 5 / 60, 7.25)], [(6.0 + 10 / 60, 7.25), (8.0 + 15 / 60, 9.0)]]
+    ai = [{"day": "월", "start": "15:00", "end": "16:30", "building_text": "", "course": "A"},
+          {"day": "화", "start": "15:00", "end": "16:30", "building_text": "", "course": "B"},
+          {"day": "화", "start": "17:00", "end": "18:00", "building_text": "", "course": "C"}]
+    out, _ = align_with_grid(blocks, ai)
+    assert [(s["start"], s["end"]) for s in out] == [("15:00", "16:15"), ("15:00", "16:15"), ("17:15", "18:00")]

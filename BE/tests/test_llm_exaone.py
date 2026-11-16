@@ -320,3 +320,37 @@ def test_llm_from_env_builds_chain_and_skips_unconfigured(monkeypatch):
     env.pop("LLM_FALLBACK_PROVIDERS")
     monkeypatch.setattr(L, "_FACTORIES", made)
     assert L.llm_from_env() == "EX"  # 대체 공급자 없으면 그대로
+
+
+def test_connection_error_switches_provider_immediately():
+    """연결 실패도 다음 공급자로, 뒤에 공급자가 있으면 같은 모델 재시도 없이 바로 (2026-11-16 '최대한 빨리')."""
+    from app.agent.llm import GeminiLLM, ProviderChain, ScriptedLLM, classify_error
+    from app.agent.schemas import TurnExtraction
+
+    assert classify_error(Exception("httpx.ConnectError: [Errno 111] Connection refused")) == "busy"
+    assert classify_error(Exception("APIConnectionError: Connection error.")) == "busy"
+
+    calls = []
+
+    class DownChat:
+        def with_structured_output(self, cls):
+            return self
+
+        def invoke(self, prompt):
+            calls.append(1)
+            raise Exception("ConnectError: [Errno 104] Connection reset by peer")
+
+    gemini = GeminiLLM("k", ["gemini-x"], chat_factory=lambda m: DownChat(), sleep=lambda s: None)
+    backup = ScriptedLLM([TurnExtraction(intent="recommend")])
+    chain = ProviderChain([("gemini", gemini), ("exaone", backup)])
+    assert chain.extract("추천", {}).intent == "recommend"
+    assert len(calls) == 1 and chain.last_provider == "exaone"  # 재시도 없이 한 번만 부르고 넘김
+    assert gemini.retries == 0
+    # 혼자 쓰는 공급자는 원래대로 재시도한다
+    calls.clear()
+    solo = GeminiLLM("k", ["gemini-x"], chat_factory=lambda m: DownChat(), sleep=lambda s: None)
+    try:
+        solo.extract("추천", {})
+    except Exception:
+        pass
+    assert len(calls) == 3

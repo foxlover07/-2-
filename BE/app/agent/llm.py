@@ -71,6 +71,11 @@ def classify_error(e: BaseException) -> ErrorKind:
     if any(k in s for k in ("503", "UNAVAILABLE", "504", "DEADLINE_EXCEEDED", "high demand", "Timeout", "timed out",
                             "service is busy", "too many concurrent")):
         return "busy"
+    # 연결 자체 실패 (네트워크 끊김·연결 거부·DNS·서버가 끊음) → 혼잡처럼 다음 공급자로 (2026-11-16, 전에는 'other' 로 실패)
+    if any(k in s for k in ("ConnectError", "ConnectTimeout", "APIConnectionError", "ConnectionError", "ConnectionReset",
+                            "RemoteProtocolError", "ServerDisconnected", "ReadError", "Connection reset", "Connection refused",
+                            "connection was closed", "Name or service not known", "getaddrinfo", "Temporary failure in name")):
+        return "busy"
     if any(k in s for k in ("429", "RESOURCE_EXHAUSTED", "quota")):
         return "quota"
     if any(k in s for k in ("401", "403", "PERMISSION_DENIED", "UNAUTHENTICATED", "API key", "API_KEY")):
@@ -553,8 +558,12 @@ class ProviderChain:
             raise LLMError("모든 LLM 공급자가 오늘 사용 한도를 넘었습니다.", "quota")
         last: LLMError | None = None
         deadline = self.budget_clock() + self.chain_budget_s
-        for name, llm in order:
+        for i, (name, llm) in enumerate(order):
             remaining = deadline - self.budget_clock()
+            # 뒤에 다른 공급자가 있으면 같은 모델 재시도 없이 바로 넘긴다 (2026-11-16 '최대한 빨리 넘어가게').
+            # 마지막 공급자는 원래 재시도 횟수를 쓴다
+            if hasattr(llm, "retries"):
+                llm.retries = 0 if i < len(order) - 1 else getattr(type(llm), "retries", RETRIES)
             if last is not None and remaining < MIN_PROVIDER_BUDGET_S:
                 break  # 앞 공급자가 시간을 다 써서 다음 공급자를 시도할 시간이 없음
             # 공급자를 바꿔도 사용자가 기다리는 전체 시간은 chain_budget_s 하나로 묶는다
