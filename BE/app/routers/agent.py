@@ -17,7 +17,8 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.agent.graph import build_graph, run_turn, to_response_parts
-from app.agent.llm import AgentLLM, llm_from_env
+from app.agent import tools
+from app.agent.llm import AgentLLM, LLMError, LLMUnavailable, llm_from_env
 from app.agent.schemas import ChatRequest, ChatResponse, TimetableImageRequest, TimetableImageResponse
 from app.config import BE_DIR, _read
 from app.routers.timetable import ocr_preview
@@ -74,7 +75,24 @@ def chat(req: ChatRequest) -> ChatResponse:
 def timetable_image(req: TimetableImageRequest) -> TimetableImageResponse:
     """시간표 캡처 → 수업 칸 미리보기 (저장하지 않음, FE 확인 화면에서 고친 뒤 시간표에 넣는다).
 
-    2026-11-16 사용자 결정: 시간표 사진은 서버의 OpenCV·OCR 로만 읽는다. 개인 일정이 담긴 이미지를
-    외부 LLM(Gemini 등)으로 보내지 않는다. LLM 공급자 순서(Gemini → EXAONE)와 상관없다.
+    2026-11-16 사용자 결정: 시간표 사진은 서버의 OpenCV·OCR 로 읽는다 (외부로 보내지 않음).
+    같은 날 바뀐 결정: OCR 을 설치할 수 없는 서버(Render 무료, 메모리 512MB)는 TIMETABLE_LLM_FALLBACK=on 일 때만
+    Gemini(주 공급자) 이미지 입력으로 읽는다. 사진은 저장하지 않고, 결과에 Gemini 로 읽었다고 밝힌다. 로컬 기본값은 off.
     """
-    return ocr_preview(req)
+    res = ocr_preview(req)
+    if res.status != "ocr_unavailable" or (_read("TIMETABLE_LLM_FALLBACK") or "off").strip().lower() != "on":
+        return res
+    try:
+        read = _get_llm().read_timetable(req.image_base64, req.mime_type, res.buildings)
+    except LLMUnavailable:
+        return res
+    except LLMError as e:
+        msg = "AI 서버가 혼잡해 사진을 읽지 못했습니다. 잠시 뒤 다시 시도해 주세요." if e.kind == "busy" else \
+            "사진을 읽지 못했습니다. 다른 캡처로 다시 시도하거나 직접 입력해 주세요."
+        return TimetableImageResponse(status="llm_error", message=msg, buildings=res.buildings)
+    slots = tools.check_timetable_read(read, req.university)
+    need = sum(1 for s in slots if s.issue)
+    msg = (f"수업 {len(slots)}칸을 읽었어요." + (f" {need}칸은 확인이 필요해요." if need else "")
+           + " 맞는지 확인한 뒤 시간표에 넣어 주세요.") if slots else "수업 칸을 찾지 못했습니다. 직접 입력해 주세요."
+    notes = [*read.notes, "이 서버에는 사진 인식(OCR)이 없어 Google Gemini 로 읽었습니다. 사진은 저장하지 않습니다."]
+    return TimetableImageResponse(status="ok", message=msg, slots=slots, notes=notes, buildings=res.buildings)

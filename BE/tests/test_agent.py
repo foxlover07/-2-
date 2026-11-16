@@ -941,3 +941,32 @@ def test_explain_with_separate_provider(monkeypatch):
     monkeypatch.setattr(g, "_EXPLAINERS", {"gemini": ScriptedLLM([], [LLMError("x", "quota")])})
     s2 = Chat([X("recommend", **FULL)]).say("추천")
     assert s2["trace"]["explanation_source"] == "fallback_llm_failed" and s2["response"].startswith(EWHA)
+
+
+def _post_photo(monkeypatch, flag, llm):
+    from app import timetable_ocr
+    from app.main import app
+    from app.routers import agent as agent_router
+
+    def unavailable(data):
+        raise timetable_ocr.OcrUnavailable("없음")
+
+    monkeypatch.setattr(timetable_ocr, "read_timetable_image", unavailable)
+    monkeypatch.setattr(agent_router, "_provider_llm", lambda: llm)
+    monkeypatch.setenv("TIMETABLE_LLM_FALLBACK", flag)
+    return TestClient(app).post("/agent/timetable-image",
+                                json={"university": EWHA, "image_base64": "aGVsbG8gd29ybGQ=", "mime_type": "image/png"}).json()
+
+
+def test_timetable_photo_llm_fallback_only_when_enabled(monkeypatch):
+    """OCR 이 없는 서버(배포)에서만, 설정을 켰을 때만 Gemini 로 읽는다 (2026-11-16 결정 변경)."""
+    from app.agent.schemas import SlotRead, TimetableRead
+
+    read = TimetableRead(slots=[SlotRead(day="월", start="09:00", end="10:15", building_text="학관 109", course="자료구조")],
+                         notes=[])
+    b = _post_photo(monkeypatch, "on", ScriptedLLM([read]))
+    assert b["status"] == "ok" and b["slots"][0]["building"] == "학관"
+    assert any("Gemini" in n and "저장하지 않습니다" in n for n in b["notes"])
+
+    b2 = _post_photo(monkeypatch, "off", None)  # LLM 이 None 이라 부르면 실패한다 → 설정이 꺼지면 보내지 않음
+    assert b2["status"] == "ocr_unavailable"

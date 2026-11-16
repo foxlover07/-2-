@@ -6,7 +6,7 @@ import type { TimetableImageResponse } from '../../types/agent'
 import { Badge, Button, Loading, Select } from '../common'
 import { newRowId, type TimetableRow } from './profileForm'
 
-// 시간표 캡처 → AI(Gemini)가 수업 칸을 읽고 → 여기서 확인·수정 → 시간표 표에 추가.
+// 시간표 캡처 → 서버 OCR(없는 서버는 설정 시 Gemini)이 수업 칸을 읽고 → 여기서 확인·수정 → 시간표를 바꾼다.
 // 읽은 결과는 바로 저장하지 않는다 (CLAUDE.md: 시간표 VLM 은 입력 결과 확인 UI 포함). 이미지는 서버에 저장하지 않는다.
 
 interface Draft {
@@ -85,7 +85,7 @@ export function TimetableImageImport({
           <p className="text-sm font-medium text-text">시간표 캡처로 불러오기</p>
           <p className="text-xs text-muted">
             에브리타임 등 시간표 캡처를 올리면 수업 칸을 읽어요. 확인한 뒤 지금 시간표를 새로 읽은 수업으로 바꿉니다. (PNG·JPG·WEBP,
-            5MB 이하)
+            5MB 이하) 사진은 저장하지 않아요. 사진 인식(OCR)이 없는 서버에서는 Google Gemini 로 읽어요.
           </p>
         </div>
         <input

@@ -721,18 +721,19 @@ def room_building_name(text: str) -> str:
     return words[-1] if words else ""
 
 
-def lookup_room_building(text: str, university: str) -> str | None:
-    """목록에 없는 건물 → 카카오 장소 검색으로 찾아 기준표에 추가 (app.building_lookup). 찾으면 표준 이름."""
+def lookup_room_building(text: str, university: str) -> tuple[str | None, bool]:
+    """목록에 없는 건물 → 카카오 장소 검색으로 찾아 기준표에 추가 (app.building_lookup).
+    → (찾은 표준 이름, 실제로 카카오에서 찾아봤는지). 검색이 꺼져 있거나 한도면 찾아본 것이 아니다."""
     from app import building_lookup
 
     name = room_building_name(text)
     if len(name) < 2:
-        return None
+        return None, False
     lk = building_lookup.find_building(university, name)
     if lk.status in ("added", "known") and lk.name:
         ok, _ = resolve_buildings([lk.name], university)
-        return ok[0] if ok else None
-    return None
+        return (ok[0] if ok else None), True
+    return None, lk.status == "not_found"
 
 
 def check_timetable_read(read: "TimetableRead", university: str) -> list["SlotOut"]:
@@ -755,13 +756,14 @@ def check_timetable_read(read: "TimetableRead", university: str) -> list["SlotOu
         building = None
         if s.building_text.strip():
             building, guessed = match_building_text(s.building_text, university)
-            found = None
+            found, searched = None, False
             if building is None:
                 # 목록에 없으면 카카오 장소 검색으로 학교 건물을 찾아 기준표에 추가한다 (같은 이름은 한 번만 검색)
-                found = lookup_room_building(s.building_text, university)
+                found, searched = lookup_room_building(s.building_text, university)
                 building = found
             if building is None and issue is None:
-                issue = f"'{s.building_text}'은(는) 건물 목록에 없고 카카오 지도에서도 찾지 못한 건물"
+                issue = (f"'{s.building_text}'은(는) 건물 목록에 없고 카카오 지도에서도 찾지 못한 건물" if searched
+                         else f"'{s.building_text}'은(는) 건물 목록에 없는 건물 · 가장 가까운 건물을 골라 주세요")
             elif found and issue is None:
                 issue = f"카카오 지도에서 찾아 새로 추가한 '{building}' · 위치 확인 필요"
             elif guessed and issue is None:
