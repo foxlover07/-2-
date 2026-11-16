@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { ArrowLeft, Check, ExternalLink, Plus, SearchX, TriangleAlert } from 'lucide-react'
-import { Badge, Button, Card, EmptyState, Loading, PlaceholderImage } from '../components/common'
+import { Badge, Button, Card, EmptyState, FavoriteButton, Loading, PlaceholderImage } from '../components/common'
 import {
   AmenitiesCard,
   BuildingCard,
@@ -205,6 +205,7 @@ function ActionCard({ property: p }: { property: Property }) {
           비교 목록에 추가
         </Button>
       )}
+      <FavoriteButton propertyId={p.property_id} withLabel className="h-10 w-full text-sm" />
       {!inCompare && compare.isFull && (
         <p className="text-center text-xs text-muted">비교는 최대 {MAX_COMPARE}개까지 담을 수 있습니다.</p>
       )}

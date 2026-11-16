@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { CompareProvider } from './contexts/CompareContext'
+import { FavoriteProvider } from './contexts/FavoriteContext'
 import { ProfileProvider } from './contexts/ProfileContext'
 import { UniversityProvider } from './contexts/UniversityContext'
 import { routes } from './routes'
@@ -12,7 +13,9 @@ function App() {
     <UniversityProvider>
       <ProfileProvider>
         <CompareProvider>
-          <RouterProvider router={router} />
+          <FavoriteProvider>
+            <RouterProvider router={router} />
+          </FavoriteProvider>
         </CompareProvider>
       </ProfileProvider>
     </UniversityProvider>

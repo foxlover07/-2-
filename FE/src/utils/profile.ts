@@ -149,7 +149,7 @@ export function parseStoredProfile(value: unknown): Profile | null {
 export function missingForRecommend(p: Profile): string[] {
   const missing: string[] = []
   // 학과·학년은 입력받지 않는다 (2026-11-16). 수업 듣는 건물만 필요
-  if (p.departmentBuildings.length === 0) missing.push('수업 듣는 건물')
+  if (p.departmentBuildings.length === 0) missing.push('학과 건물')
   if (p.priorities.length < 2) missing.push('우선순위 1·2순위')
   if (p.budgetManwon === null || p.budgetManwon <= 0) missing.push('유지비 상한')
   if (p.desiredCommuteMin === null) missing.push('희망 통학 시간')

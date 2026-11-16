@@ -21,7 +21,7 @@ import { DUPLICATE_HINT, duplicateCounts, duplicateGroups } from '../../utils/du
 import { formatArea, formatManwon } from '../../utils/format'
 import { missingForRecommend, type Profile } from '../../utils/profile'
 import { vsText } from '../../utils/vsTarget'
-import { Badge, Card, EmptyState, Loading } from '../common'
+import { Badge, Card, EmptyState, FavoriteButton, Loading } from '../common'
 
 // 처음에는 상위 몇 개만 보여 주고, '더 보기'를 누를 때마다 MORE 개씩 늘린다 (분석 카드가 너무 아래로 밀리지 않게)
 const FIRST = 5
@@ -449,6 +449,7 @@ function ResultRow({
         {inCompare ? <Check className="size-3.5" aria-hidden /> : <Plus className="size-3.5" aria-hidden />}
         {inCompare ? '비교 중' : '비교'}
       </button>
+      <FavoriteButton propertyId={item.property_id} withLabel />
     </li>
   )
 }

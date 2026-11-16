@@ -106,7 +106,7 @@ export function WalkTimeCard({ property }: { property: Property }) {
             <Link to="/profile" className="font-medium text-blue underline">
               생활 프로필
             </Link>
-            에서 수업 듣는 건물이나 시간표를 넣으면 그 건물 기준으로 보여 줍니다.
+            에서 학과 건물이나 시간표를 넣으면 그 건물 기준으로 보여 줍니다.
           </p>
         )}
       </div>

@@ -8,6 +8,7 @@ const LINKS = [
   { to: '/', label: '매물 탐색', end: true },
   { to: '/profile', label: '생활 프로필', end: false },
   { to: '/compare', label: '매물 비교', end: false },
+  { to: '/favorites', label: '찜 목록', end: false },
 ]
 
 export function TopNav() {

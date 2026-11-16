@@ -20,7 +20,9 @@ export function CompareBar({ properties }: CompareBarProps) {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white shadow-[0_-4px_16px_rgba(20,33,61,0.08)]">
-      <div className="mx-auto flex max-w-[1440px] flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:px-6">
+      {/* 오른쪽 아래 'AI 상담' 버튼(ChatPanel, fixed right-4 bottom-4)과 겹치지 않게 오른쪽을 비워 둔다.
+          버튼을 바 위로 올리면 목록 마지막 매물의 '상세 보기'를 가리므로 바 쪽 버튼을 옆으로 옮긴다 (2026-11-16) */}
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-3 py-3 pr-36 pl-4 md:flex-row md:items-center md:pr-40 md:pl-6">
         <p className="shrink-0 text-sm font-bold text-navy">
           비교 목록 <span className="text-blue">{ids.length}</span>/{MAX_COMPARE}
         </p>

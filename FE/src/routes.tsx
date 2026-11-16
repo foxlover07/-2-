@@ -2,6 +2,7 @@ import type { RouteObject } from 'react-router'
 import { AppLayout } from './components/layout/AppLayout'
 import { ComparePage } from './pages/ComparePage'
 import { ExplorePage } from './pages/ExplorePage'
+import { FavoritesPage } from './pages/FavoritesPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { PropertyDetailPage } from './pages/PropertyDetailPage'
@@ -14,6 +15,7 @@ export const routes: RouteObject[] = [
       { path: 'properties/:id', element: <PropertyDetailPage /> },
       { path: 'profile', element: <ProfilePage /> },
       { path: 'compare', element: <ComparePage /> },
+      { path: 'favorites', element: <FavoritesPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

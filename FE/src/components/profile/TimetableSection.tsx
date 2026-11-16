@@ -177,7 +177,7 @@ export function TimetableSection({
       <ul className="divide-y divide-border rounded-control border border-border">
         {groups.length === 0 && (
           <li className="px-3 py-6 text-center text-sm text-muted">
-            아직 추가한 수업이 없습니다. 시간표가 없으면 이동 시간은 수업 듣는 건물만으로 계산합니다.
+            아직 추가한 수업이 없습니다. 시간표가 없으면 이동 시간은 학과 건물만으로 계산합니다.
           </li>
         )}
         {groups.map((g) => (

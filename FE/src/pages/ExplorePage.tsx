@@ -7,6 +7,7 @@ import { PropertyList } from '../components/explore/PropertyList'
 import { MapView, type LocationStatus } from '../components/map/MapView'
 import { getUniversityLabel } from '../constants/universities'
 import { useCompare } from '../contexts/CompareContext'
+import { useFavorites } from '../contexts/FavoriteContext'
 import { useProfile } from '../contexts/ProfileContext'
 import { useUniversity } from '../contexts/UniversityContext'
 import { getProperties } from '../services/propertyService'
@@ -74,11 +75,15 @@ function ExploreView({ university, load, properties, listPaddingBottom }: Explor
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [locationStatus, setLocationStatus] = useState<Record<string, LocationStatus>>({})
 
+  // 찜만 보기: 지도·목록 모두 찜한 매물만 (2026-11-16)
+  const favorites = useFavorites()
+  const [favOnly, setFavOnly] = useState(false)
+
   const bounds = useMemo(() => getFilterBounds(properties), [properties])
-  const visible = useMemo(
-    () => sortProperties(filterProperties(properties, filters), sortKey),
-    [properties, filters, sortKey],
-  )
+  const visible = useMemo(() => {
+    const list = sortProperties(filterProperties(properties, filters), sortKey)
+    return favOnly ? list.filter((p) => favorites.ids.includes(p.property_id)) : list
+  }, [properties, filters, sortKey, favOnly, favorites.ids])
   const resetFilters = useCallback(() => setFilters(EMPTY_FILTERS), [])
   const mergeLocationStatus = useCallback(
     (next: Record<string, LocationStatus>) => setLocationStatus((prev) => ({ ...prev, ...next })),
@@ -108,6 +113,9 @@ function ExploreView({ university, load, properties, listPaddingBottom }: Explor
         onSortChange={setSortKey}
         onSelect={setSelectedId}
         onResetFilters={resetFilters}
+        favOnly={favOnly}
+        favCount={favorites.ids.length}
+        onFavOnlyChange={setFavOnly}
       />
     )
   }

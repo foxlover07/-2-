@@ -1,7 +1,7 @@
 import type { Ref } from 'react'
 import { Link } from 'react-router'
 import { ChevronRight, MapPinOff } from 'lucide-react'
-import { Badge, Card, PlaceholderImage } from '../common'
+import { Badge, Card, FavoriteButton, PlaceholderImage } from '../common'
 import type { Property } from '../../types/property'
 import { getMonthlyFixedCost } from '../../utils/cost'
 import { formatArea, formatManwon } from '../../utils/format'
@@ -102,7 +102,10 @@ export function PropertyCard({
       </div>
 
       <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
-        <span className="text-xs text-muted">{p.property_id}</span>
+        <span className="flex items-center gap-1 text-xs text-muted">
+          <FavoriteButton propertyId={p.property_id} className="-my-1 size-7" />
+          {p.property_id}
+        </span>
         <Link
           to={`/properties/${p.property_id}`}
           onClick={(e) => e.stopPropagation()}

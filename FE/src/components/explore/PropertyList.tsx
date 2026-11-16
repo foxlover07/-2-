@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { SearchX } from 'lucide-react'
+import { Heart, SearchX } from 'lucide-react'
+import { cx } from '../../utils/cx'
 import { Button, EmptyState } from '../common'
 import { useCompare } from '../../contexts/CompareContext'
 import type { Property } from '../../types/property'
@@ -16,6 +17,9 @@ interface PropertyListProps {
   onSortChange: (key: SortKey) => void
   onSelect: (id: string) => void
   onResetFilters: () => void
+  favOnly: boolean
+  favCount: number
+  onFavOnlyChange: (v: boolean) => void
 }
 
 export function PropertyList({
@@ -26,6 +30,9 @@ export function PropertyList({
   onSortChange,
   onSelect,
   onResetFilters,
+  favOnly,
+  favCount,
+  onFavOnlyChange,
 }: PropertyListProps) {
   const compare = useCompare()
   const cardRefs = useRef(new Map<string, HTMLDivElement>())
@@ -43,6 +50,18 @@ export function PropertyList({
         <p className="text-sm text-text">
           매물 <span className="font-bold text-blue">{properties.length}</span>개
         </p>
+        <button
+          type="button"
+          aria-pressed={favOnly}
+          onClick={() => onFavOnlyChange(!favOnly)}
+          className={cx(
+            'ml-auto inline-flex h-9 items-center gap-1 rounded-control border px-2.5 text-sm',
+            favOnly ? 'border-red bg-red-50 text-red' : 'border-border bg-white text-text hover:bg-bg',
+          )}
+        >
+          <Heart className={cx('size-4', favOnly ? 'fill-current' : 'text-muted')} aria-hidden />
+          찜만 보기 {favCount}
+        </button>
         <select
           aria-label="정렬"
           value={sortKey}
@@ -57,7 +76,18 @@ export function PropertyList({
         </select>
       </div>
 
-      {properties.length === 0 ? (
+      {properties.length === 0 && favOnly ? (
+        <EmptyState
+          icon={Heart}
+          title={favCount === 0 ? '아직 찜한 매물이 없습니다' : '지금 조건에 맞는 찜한 매물이 없습니다'}
+          description="매물 카드·상세·추천 결과의 하트를 누르면 여기에 모입니다."
+          action={
+            <Button variant="secondary" size="sm" onClick={() => onFavOnlyChange(false)}>
+              전체 매물 보기
+            </Button>
+          }
+        />
+      ) : properties.length === 0 ? (
         <EmptyState
           icon={SearchX}
           title="조건에 맞는 매물이 없습니다"
