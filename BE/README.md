@@ -1,70 +1,62 @@
 # BE — AI 주거 추천 서비스 백엔드
 
-FastAPI 기반 백엔드 뼈대. 데이터는 `../DB/poc_ewha.csv`(UTF-8 BOM)를 읽어 메모리에 올린다.
+FastAPI 백엔드. 매물·도보시간·부가정보(CSV·JSON 파일)를 읽어 추천, AI 상담 챗봇, 의사결정 분석, 매물 상세 정보, 시간표 사진 읽기 API를 제공한다.
+설계와 결정 이력은 [`docs/PROJECT.md`](../docs/PROJECT.md)가 기준이다 (코드와 다르면 코드가 우선).
 
 ## 준비
 
-[uv](https://docs.astral.sh/uv/)가 필요하다. `BE/` 폴더에서:
+Python 3.13, [uv](https://docs.astral.sh/uv/)가 필요하다. `BE/` 폴더에서:
 
 ```bash
-uv sync
+uv sync                  # 기본
+uv sync --group ocr      # 시간표 사진 OCR(EasyOCR, torch 포함 1GB+)까지. 없으면 /timetable/ocr 이 ocr_unavailable 로 답한다
+cp .env.example .env.local
 ```
 
-환경 변수가 필요하면 `.env.example`을 복사해 `.env`로 만든다 (비워 두면 기본값 사용).
+키·경로는 `.env.local` 에만 넣는다 (`.env.example` 에는 이름만, 커밋 금지). 나머지는 `.env.example` 참고 (아래 `TIMETABLE_LLM_FALLBACK`, `DATA_BUNDLE_KEY` 는 배포 서버 설정이라 `.env.example` 에 없다). 자주 쓰는 것:
 
-```bash
-cp .env.example .env
-```
+| 키 | 설명 |
+| --- | --- |
+| `CORS_ORIGINS` | 허용 Origin, 쉼표 구분 (기본 `http://localhost:5173`) |
+| `DATA_CSV_PATH` | 매물 CSV, 쉼표로 여러 개 (기본 `../DB/poc_ewha.csv` 샘플) |
+| `WALK_TABLE_PATH` | 매물 × 건물 도보시간 표, 쉼표로 여러 개 (없으면 매물 CSV 의 spot1~4 만) |
+| `LLM_PROVIDER`, `LLM_FALLBACK_PROVIDERS` | 챗봇 LLM 순서 (지금 `gemini` → `exaone`) |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Gemini |
+| `EXAONE_API_KEY`, `EXAONE_BASE_URL`, `EXAONE_MODEL` | LG EXAONE (OpenAI 호환 API) |
+| `KAKAO_REST_API_KEY` | 장소 검색·도보 경로 (건물·자주 가는 곳 도보시간, 장소 제외 조건) |
+| `DATA_GO_KR_SERVICE_KEY` | 공공데이터포털 (실거래가·건축물대장·상가정보 수집) |
+| `YOUTHCENTER_API_KEY` | 온통청년 정책 수집 |
+| `TIMETABLE_LLM_FALLBACK` | `on` 이면 OCR 이 없는 서버에서 시간표 글자를 Gemini 로 읽는다 (시각은 OpenCV 격자) |
+| `DATA_BUNDLE_KEY` | 배포용: 암호화 데이터 묶음(`data/deploy_bundle.bin`)을 푸는 키. 없으면 묶음을 쓰지 않는다 |
 
-OpenRouter API 키 받는 법
-
-1. 오픈라우터 가입
-2. 대쉬보드에서 API keys 클릭
-3. 새 키 만들어서 생성된 키 바로 복사(키는 처음에 만들 때만 전부 보여준다고 합니다)
-4. 저는 모델에 google/gemma-4-26b-a4b-it:free 썼습니다
-
-| 키 | 기본값 | 설명 |
-| --- | --- | --- |
-| `CORS_ORIGINS` | `http://localhost:5173` | 쉼표로 구분한 허용 Origin |
-| `DATA_CSV_PATH` | `../DB/poc_ewha.csv` | 매물 CSV 경로 |
-| `OPENAI_API_KEY` | (필수, `scripts/ask.py`) | OpenRouter API 키 |
-| `OPENAI_BASE_URL` |`https://openrouter.ai/api/v1`|
-| `LLM_MODEL` | (필수, `scripts/ask.py`) | 모델 이름 (OpenRouter는 `제공자/모델` 형식) |
+실거래·상가정보·건축물대장·역/공원·정책 파일은 경로를 비우면 `DB/staging` 에서 가장 최근 파일을 자동으로 고른다 (`MARKET_TX_PATH`, `STORES_PATH`, `BUILDING_TITLES_PATH`, `POI_PATH`, `POLICIES_PATH` 로 바꿀 수 있음).
 
 ## 실행
 
 ```bash
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --port 8011
 ```
 
-- http://localhost:8000/health
-- http://localhost:8000/properties
-- http://localhost:8000/properties/P001
-- `POST http://localhost:8000/recommend` (아래 "추천")
-- API 문서: http://localhost:8000/docs
+- API 문서: http://localhost:8011/docs
+- FE 는 `VITE_API_URL=http://localhost:8011` 로 붙는다.
 
-## LLM 호출 실험 (`scripts/ask.py`)
+### API
 
-`.env`에 `OPENAI_API_KEY`, `LLM_MODEL`(OpenRouter면 `OPENAI_BASE_URL`도)을 넣은 뒤:
-
-```bash
-uv run python scripts/ask.py
-```
-
-일반 호출과 JSON 호출을 차례로 실행한다. 하나만 돌리거나 문장을 바꾸려면:
-
-```bash
-uv run python scripts/ask.py chat "이대 근처 원룸 시세가 어때?"
-```
-
-```bash
-uv run python scripts/ask.py extract "학관은 매일 가고 예산은 70만원"
-```
-
-- **chat**: 시스템 프롬프트 "너는 대학생 자취방 추천 도우미야. 모르면 모른다고 답해." + 질문 → 답변, 토큰 사용량
-- **extract**: 문장 → `{"visits": {강의동: 횟수}, "budget_manwon": 숫자|null, "cost_importance": 1~5, "walk_importance": 1~5}`
-  - 강의동 이름은 CSV의 `spot1~4_name`에서만 고르게 하고, 목록에 없는 이름은 버린다
-  - JSON 파싱에 실패하면 기본값 `{"visits": {}, "budget_manwon": null, "cost_importance": 3, "walk_importance": 3}`
+| 경로 | 내용 |
+| --- | --- |
+| `GET /health` | 상태 확인 |
+| `GET /properties`, `GET /properties/{id}` | 매물 목록·상세 |
+| `POST /recommend` | 추천 (아래 "추천") |
+| `GET /recommend/buildings` | 대학별 학교 건물 목록·도보 데이터 범위 |
+| `POST /recommend/building-walks` | 도보시간 없는 매물 × 건물을 카카오로 계산 (하루 상한) |
+| `POST /analysis/pareto` · `tradeoff` · `sensitivity` · `relaxation` | 의사결정 분석 |
+| `GET /market/compare/{id}` | 주변 실거래 시세 비교 |
+| `GET /market/amenities/{id}` | 편의시설·역·정류장·공원 |
+| `GET /market/building/{id}` | 건축물대장 |
+| `GET /market/contract-check/{id}` | 계약 전 확인 항목 |
+| `GET /market/related-policies/{id}` | 관련 정책 안내 (자격 판정 없음) |
+| `POST /agent/chat` | AI 상담 챗봇 한 턴 |
+| `POST /agent/timetable-image`, `POST /timetable/ocr` | 시간표 사진 → 수업 칸 미리보기 (사진 저장 안 함) |
 
 ## 테스트
 
@@ -72,42 +64,42 @@ uv run python scripts/ask.py extract "학관은 매일 가고 예산은 70만원
 uv run pytest
 ```
 
+LLM 실제 호출 평가(유료·한도 사용, 실행 전 승인): `scripts/eval_agent.py`, `scripts/eval_rules.py`. 결과는 `eval/results/`(커밋 안 함).
+
 ## 구조
 
 ```
 BE/
 ├── app/
-│   ├── main.py              # FastAPI 앱, CORS, /health
+│   ├── main.py              # FastAPI 앱, CORS, /health, 배포 묶음 풀기
 │   ├── models.py            # Pydantic Property 모델 (FE/src/types/property.ts 와 1:1)
-│   ├── data.py              # CSV 로딩 (빈 값 → null, 숫자 열 → 숫자), 도보시간 표
-│   ├── config.py            # 데이터 파이프라인·외부 API 설정
-│   ├── buildings.py         # 시간표 건물 이름 정규화·줄임말
-│   ├── scoring_config.py    # 추천 설정값 (통합안 6장) + 학과 → 건물 예시표
-│   ├── scoring.py           # 추천 (필터, 요소별 점수, 종합 점수, 비추천 사유)
-│   ├── exclusions.py        # 챗봇 제외 조건: 확인 계획 형식 + 확인 도구 실행 (챗봇은 미완성)
-│   ├── tools/               # Kakao API (장소 검색·도보 경로·주소)
-│   └── routers/
-│       ├── properties.py    # GET /properties, GET /properties/{property_id}
-│       └── recommend.py     # POST /recommend, GET /recommend/buildings
-├── pipeline/                # 매물 수집·정규화, 도보 경로 (오프라인 스크립트)
-├── scripts/ask.py           # LLM 호출 실험
-└── tests/
-    ├── test_properties.py
-    ├── test_scoring_rule.py     # 공통 규칙 · 교환비 · 3.4장 예시표 · 설정값
-    ├── test_scoring_filters.py  # 필터 순서·사유 · 대학별
-    ├── test_scoring_travel.py   # 이동 시간 (학과 건물 · 시간표) · 건물 이름
-    ├── test_scoring_combine.py  # 종합 점수 · 비추천 사유 · assumptions
-    ├── test_exclusions.py       # 챗봇 제외 조건 도구·실행
-    ├── test_recommend_api.py    # POST /recommend
-    ├── test_jibsa_adapter.py
-    └── test_kakao.py
+│   ├── data.py              # 매물 CSV·도보시간 표 로딩 (빈 값 → null)
+│   ├── config.py            # 환경 변수 읽기
+│   ├── scoring.py           # 추천 엔진 (필터, 요소별 점수, 종합 점수, 비추천 사유)
+│   ├── scoring_config.py    # 추천 설정값 (통합안 6장)
+│   ├── exclusions.py        # 제외 조건: 확인 계획 형식 + 확인 도구 실행
+│   ├── decision/            # 의사결정 분석 (pareto, sensitivity, relaxation)
+│   ├── agent/               # 챗봇: LangGraph 그래프, LLM 연결(Gemini→EXAONE), 규칙·검증, 평가
+│   ├── buildings.py · building_lookup.py · building_walks.py   # 건물 이름 정규화, 목록 밖 건물 찾기, 그때 도보 계산
+│   ├── frequent_places.py · place_search.py                   # 자주 가는 곳, 장소 검색
+│   ├── market.py · amenities.py · poi.py · building_register.py # 실거래·편의시설·역/공원·건축물대장
+│   ├── listing_status.py    # 거래 끝난 매물 빼기
+│   ├── policy.py            # 정책 안내
+│   ├── timetable_ocr.py     # 시간표 사진 (OpenCV 격자 + EasyOCR)
+│   ├── deploy_bundle.py     # 배포용 암호화 데이터 묶음
+│   ├── tools/kakao.py       # Kakao API (장소 검색·도보 경로·주소)
+│   └── routers/             # properties · recommend · analysis · market · agent · timetable
+├── pipeline/                # 데이터 수집·가공 (python -m pipeline.<이름>, docs/PROJECT.md 5장)
+├── scripts/                 # ask.py(LLM 호출 실험) · eval_agent.py · eval_rules.py
+├── eval/                    # 챗봇 평가 케이스
+├── data/deploy_bundle.bin   # 배포용 암호화 데이터
+└── tests/                   # pytest
 ```
 
 ## 추천 (`app/scoring.py`)
 
 팀의 「추천 시스템 통합안」(2026-11-13 회의 확정안, 상세는 통합 문서 `docs/PROJECT.md` 3장)을 구현한다.
-지금은 통합안 8장 구현 순서 중 **1~4번**까지 했다. 5번 챗봇은 미완성이다.
-v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /recommend/v2`는 이 통합안으로 합쳐 지웠다.
+화면 추천과 챗봇 추천이 같은 엔진을 쓴다. v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /recommend/v2`는 이 통합안으로 합쳐 지웠다.
 
 - 요소는 **예산 · 이동 시간 · 면적** 3개다. 매물마다 **절대 점수(0~100)** 라서 다른 매물에 따라 바뀌지 않는다.
 - 사용자는 **1순위·2순위만** 고른다. 가중치는 1·2·3순위 순으로 **0.55 / 0.30 / 0.15**.
@@ -139,7 +131,7 @@ v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /r
 | 예산 | 유지비 상한 | 상한보다 쌈 (5만 원) | 상한 초과, 여유 구간 (5만 원) |
 | 면적 | 희망 면적 | 넓은 면적 좋음 +5 · 상관없음 0 · 싫음 −2.5 (2㎡) | 희망보다 좁음 (2㎡) |
 
-- **이동 시간**은 학과 건물 0.4 · 자주 가는 곳 0.4 · 시간표 0.2. 부분마다 편도 평균에 규칙을 적용한 다음 합친다. 자주 가는 곳은 데이터 준비 중이라 늘 빠지고, 시간표가 없을 때도 그 비중을 나머지에 나눈다.
+- **이동 시간**은 학과 건물 0.4 · 자주 가는 곳 0.4 · 시간표 0.2. 부분마다 편도 평균에 규칙을 적용한 다음 합친다. 자주 가는 곳은 챗봇에서 입력했을 때만 쓰고(추천 상위 매물만 카카오 도보 경로로 계산), 없거나 시간표가 없으면 그 비중을 나머지에 나눈다.
 - 예 (희망 15분, 상한 75만 원, 희망 20㎡): 이동 0분 57.5 · 25분 40 / 유지비 45만 80 · 85만 30 / 면적 16㎡ 30 · 30㎡ 좋음 75, 싫음 37.5.
 - 교환비는 매물 1,175개 회귀분석의 시장 가격으로 정했다 (통합안 3.2장). 학생이 느끼는 통학의 무게보다 작을 수 있다.
 
@@ -151,9 +143,9 @@ v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /r
 - **학과 → 건물:** `DEPARTMENT_BUILDINGS`는 이대 **예시값 3개뿐이라 팀 확인이 필요하다.** 다른 대학과 표에 없는 학과는 `department_buildings`로 직접 입력한다.
 - **학년:** 받기만 하고 계산에는 쓰지 않는다.
 
-### 챗봇 제외 조건 (`app/exclusions.py`) — 챗봇은 미완성
+### 챗봇 제외 조건 (`app/exclusions.py`)
 
-사용자가 승인한 **확인 계획**을 `exclusions`로 넣으면 코드가 매물마다 확인한다. 말 → 계획을 만드는 챗봇(LLM)은 아직 없어서, 지금은 계획 JSON을 직접 넣어 테스트한다.
+**확인 계획**을 `exclusions`로 넣으면 코드가 매물마다 확인한다. 챗봇은 말에서 장소 기호(`place_prefs`)와 그 밖의 기호(`exclusion_request`)를 뽑고, 계획 단계에서 이 형식으로 바꾼다. `POST /recommend`에 계획 JSON을 직접 넣어 테스트할 수도 있다.
 
 | 도구 | 하는 일 | 필요한 칸 |
 | --- | --- | --- |
@@ -169,7 +161,7 @@ v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /r
 - **확인 질문 없이 바로 적용한다.** 답변 맨 앞에 '바뀐 것'(`ExclusionPlan.applied_text(preview)`, 서버가 조건에서 만든 문장)을 붙인다. `preview_plan()`으로 조건마다 빠지는 매물 수와 남는 수를 계산해 함께 보여 준다(외부 호출 없음, 카카오 조건은 실시간 검색). **적용하면 남는 매물이 0개일 때만** 적용하지 않고 어느 조건을 풀지 묻는다(`blocked_text`).
 - **매물에서 직접 봐야 하는 것(방음·곰팡이·결로·채광·수압·배수·벌레·외풍·냄새)은 데이터로 추정하지 않는다.** 이런 말이 조건 이름에 들어가면 서버가 계획을 거절하고, `onsite_checks`(정해진 항목 `ONSITE_CHECKS`)로 집 볼 때 확인할 것을 안내한다. 데이터로 못 보는 기호는 `unsupported`(빼지 않음).
 - 시설 칸이 없는 시설은 `tool_catalog(props)`에 나오지 않는다(데이터가 생기면 자동으로 쓰인다).
-- 층·방 구조·주변 시설·건축물대장 칸은 통합 매물 CSV(`integrated_listings.csv`)에만 있다. PoC CSV에서는 비어 있어 '확인 못 함'이 된다.
+- 층·방 구조·주변 시설·건축물대장 칸은 통합 매물 CSV(`integrated_listings.csv`)에만 있다. PoC CSV와 대학별 추천 매물 CSV(`*_candidates_*.csv`)에서는 비어 있어 '확인 못 함'이 된다.
 
 ```json
 {
@@ -239,8 +231,8 @@ v3 카테고리 추천(`categories.py`, `GET /recommend/categories`)과 `POST /r
 ### 남은 것과 한계 (통합안 9장)
 
 - **학과 → 건물 표:** 이대 예시 3개뿐이다. 다른 대학은 사용자가 건물을 고른다.
-- **매물 좌표:** 레포의 PoC 매물 10개는 좌표가 비어 있다.
-- **챗봇:** 미완성. 확인 도구의 기본값(소음 → 키워드·반경·개수 등), LLM 모델, 프롬프트, 확인 화면을 정해야 한다.
+- **매물 좌표:** 레포의 PoC 매물 10개는 좌표가 비어 있다 (수집 데이터는 `.env.local` 경로로 지정).
+- **챗봇:** 동작하지만 아직 다듬는 중이다. 2026-11-16 생활 시나리오 테스트에서 희망 통학 시간·면적이 없으면 추천 단계로 가지 못했고, '술집 많은 곳' 같은 기준(개수)은 LLM 이 정한다.
 - **교환비:** 시장 가격으로 정한 값이라 학생이 느끼는 통학의 무게보다 작을 수 있다. "A가 B보다 위여야 한다" 형식의 테스트 케이스로 확인한다.
 - **도로·소음:** 카카오 장소 검색으로는 확인할 수 없다. 추후 도구로 추가한다.
 - **대중교통 시간:** 지금은 도보만 쓴다.
