@@ -1,6 +1,5 @@
 # home_poc — AI 주거 의사결정 서비스
 
-## 🔗 주요 링크
 [서비스](https://home-poc-frontend.vercel.app) 
 
 
