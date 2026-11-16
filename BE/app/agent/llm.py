@@ -210,9 +210,9 @@ TIMETABLE_SYSTEM = """너는 대학 시간표 캡처(에브리타임 등)를 읽
 규칙
 - 칸마다 요일(월~일), 시작·종료 시각(HH:MM, 24시간), 건물, 과목을 적는다. 같은 과목이 여러 요일이면 요일마다 따로 적는다.
 - 시각은 칸의 위치와 시간 눈금으로 읽는다. 1교시·2교시처럼 교시만 있으면 notes 에 남기고 추측으로 시각을 만들지 않는다.
-- 건물은 강의실 표기에서 건물 부분만 (예: 'ECC B146' → 'ECC', '포관 B152' → '포관', '공학관 301' → '공학관'). 표기가 없으면 빈 문자열.
+- building_text 에는 칸에 적힌 강의실 표기를 **보이는 글자 그대로** 적는다 (예: '캠B134', '학109', '포252', '경영313', 'ECC B146',
+  '교양관609호'). 줄임말을 풀거나 다른 건물 이름으로 바꾸지 않는다 — 건물 맞추기는 서버가 한다. 표기가 없으면 빈 문자열.
 - 보이지 않거나 흐린 칸, 애매한 내용은 지어내지 말고 notes 에 짧게 적는다.
-- 참고용 건물 목록이 있으면 표기를 그대로 두되, 같은 건물이면 그 이름을 써도 된다.
 """
 
 
@@ -354,7 +354,7 @@ class GeminiLLM(_FallbackLLM):
         msgs = [
             SystemMessage(content=TIMETABLE_SYSTEM),
             HumanMessage(content=[
-                {"type": "text", "text": "참고용 건물 목록: " + (", ".join(buildings) if buildings else "없음")},
+                {"type": "text", "text": "칸마다 강의실 표기를 보이는 글자 그대로 building_text 에 적어 주세요 (건물 이름으로 바꾸지 말 것)."},
                 {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}},
             ]),
         ]

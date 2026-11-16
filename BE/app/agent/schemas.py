@@ -300,7 +300,7 @@ class SlotRead(BaseModel):
     day: Day
     start: str = Field(description="HH:MM (24시간)")
     end: str = Field(description="HH:MM (24시간)")
-    building_text: str = Field(description="강의실 표기에서 건물 부분 (예: 'ECC B146' → 'ECC'). 없으면 빈 문자열")
+    building_text: str = Field(description="강의실 표기를 보이는 글자 그대로 (예: '캠B134', '학109', 'ECC B146'). 건물 이름으로 바꾸지 않는다. 없으면 빈 문자열")
     course: str | None = Field(None, description="과목 이름 (보이면)")
 
 

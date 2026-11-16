@@ -149,3 +149,51 @@ def test_match_building_text_exact_suffix_and_fuzzy(monkeypatch):
     # OCR 이 앞에 기호를 붙여 읽어도 2글자 줄임말 전체 일치는 맞춘다
     for t in ("'서관 315호", "(서관 315호", "서관315호"):
         assert m(t, "고려대학교") == ("문과대학 서관", False)
+
+
+def test_room_formats_of_three_schools(monkeypatch):
+    """학교마다 다른 강의실 표기 (2026-11-16 사용자 캡처 4장): 이대 줄임말, 고대 'OO관 207호', 과기대 'OO관-B001'."""
+    from app.agent import tools
+
+    m = tools.match_building_text
+    assert m("캠B134", "이화여자대학교")[0] == "ECC" and m("동창201-1", "이화여자대학교")[0] == "동창회기념회관"
+    assert m("교양관 207호", "고려대학교")[0] == "우당교양관" and m("서관 315호", "고려대학교")[0] == "문과대학 서관"
+    assert m("다빈치관-B001", "서울과학기술대학교")[0] == "다빈치관" and m("테크노큐브-403", "서울과학기술대학교")[0] == "테크노큐브"
+
+
+def test_professor_only_text_is_not_a_room(monkeypatch):
+    from app.agent import tools
+    from app.agent.schemas import SlotRead, TimetableRead
+
+    read = TimetableRead(slots=[SlotRead(day="화", start="12:30", end="13:45", building_text="노준혁/", course="인공지능")],
+                         notes=[])
+    s = tools.check_timetable_read(read, "이화여자대학교")[0]
+    assert s.building is None and s.issue.startswith("강의실 표기 없음")
+
+
+# ---------------------------------------------------------------- OpenCV 칸 위치 + AI 글자 (A안, 2026-11-16)
+
+def test_align_ai_text_with_grid_times():
+    """AI 가 30분 단위로 어림한 시각 → 격자 위치(정확한 75분 수업)로 바꾸고, 첫 줄 시각·요일은 AI 칸과 맞는 값으로 정한다."""
+    from app.timetable_ocr import align_with_grid
+
+    # 첫 가로선 = 9시 가정: 화요일 열에 9:00~10:15, 10:30~11:45 / 목요일 열(3번째)에 15:00~16:15
+    blocks = [[], [(0.0, 1.25), (1.5, 2.75)], [], [(6.0, 7.25)], []]
+    ai = [
+        {"day": "화", "start": "09:00", "end": "10:30", "building_text": "교양관 207호", "course": "글쓰기"},
+        {"day": "화", "start": "10:30", "end": "12:00", "building_text": "서관 315호", "course": "현대시인론"},
+        {"day": "목", "start": "15:00", "end": "16:30", "building_text": "정보통신관 604호", "course": "자료구조"},
+    ]
+    out, notes = align_with_grid(blocks, ai)
+    assert [(s["day"], s["start"], s["end"], s["building_text"]) for s in out] == [
+        ("화", "09:00", "10:15", "교양관 207호"), ("화", "10:30", "11:45", "서관 315호"),
+        ("목", "15:00", "16:15", "정보통신관 604호")]
+    assert "격자 위치" in notes[-1]
+
+
+def test_align_falls_back_when_grid_disagrees():
+    from app.timetable_ocr import align_with_grid
+
+    ai = [{"day": "월", "start": "09:00", "end": "10:00", "building_text": "학109", "course": None}]
+    out, notes = align_with_grid([[]], ai)  # 격자 칸이 없다
+    assert out == ai and "그대로" in notes[0]

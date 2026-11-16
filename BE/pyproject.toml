@@ -10,6 +10,7 @@ dependencies = [
     "langchain-google-genai>=4.4.3",
     "langgraph>=1.2.20",
     "openai>=3.46.0",
+    "opencv-python-headless>=5.0.0",
     "python-dotenv>=1.2.4",
     "uvicorn>=0.54.0",
 ]

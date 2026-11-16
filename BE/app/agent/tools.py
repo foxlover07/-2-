@@ -761,7 +761,10 @@ def check_timetable_read(read: "TimetableRead", university: str) -> list["SlotOu
                 # 목록에 없으면 카카오 장소 검색으로 학교 건물을 찾아 기준표에 추가한다 (같은 이름은 한 번만 검색)
                 found, searched = lookup_room_building(s.building_text, university)
                 building = found
-            if building is None and issue is None:
+            if building is None and issue is None and not re.search(r"\d", s.building_text):
+                # 호수가 없는 표기 (교수명만 '노준혁/', 온라인 강의 등) → 강의실이 아니다
+                issue = "강의실 표기 없음 · 건물을 골라 주세요"
+            elif building is None and issue is None:
                 issue = (f"'{s.building_text}'은(는) 건물 목록에 없고 카카오 지도에서도 찾지 못한 건물" if searched
                          else f"'{s.building_text}'은(는) 건물 목록에 없는 건물 · 가장 가까운 건물을 골라 주세요")
             elif found and issue is None:

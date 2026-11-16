@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import threading
@@ -19,7 +21,10 @@ from fastapi import APIRouter
 from app.agent.graph import build_graph, run_turn, to_response_parts
 from app.agent import tools
 from app.agent.llm import AgentLLM, LLMError, LLMUnavailable, llm_from_env
-from app.agent.schemas import ChatRequest, ChatResponse, TimetableImageRequest, TimetableImageResponse
+from app.agent.schemas import (
+    ChatRequest, ChatResponse, SlotRead, TimetableImageRequest, TimetableImageResponse, TimetableRead,
+)
+from app import timetable_ocr
 from app.config import BE_DIR, _read
 from app.routers.timetable import ocr_preview
 
@@ -90,9 +95,20 @@ def timetable_image(req: TimetableImageRequest) -> TimetableImageResponse:
         msg = "AI 서버가 혼잡해 사진을 읽지 못했습니다. 잠시 뒤 다시 시도해 주세요." if e.kind == "busy" else \
             "사진을 읽지 못했습니다. 다른 캡처로 다시 시도하거나 직접 입력해 주세요."
         return TimetableImageResponse(status="llm_error", message=msg, buildings=res.buildings)
+    # A안 (11-16): 칸의 요일·시각은 OpenCV 격자 위치로 다시 잰다 (AI 는 시각을 30분·1시간 단위로 어림한다).
+    # 격자를 못 찾으면 AI 시각을 그대로 쓰고 안내한다
+    grid_notes: list[str] = []
+    try:
+        data = base64.b64decode(req.image_base64, validate=True)
+        aligned, grid_notes = timetable_ocr.align_with_grid(
+            timetable_ocr.grid_blocks(data), [s.model_dump() for s in read.slots])
+        read = TimetableRead(slots=[SlotRead.model_validate(s) for s in aligned], notes=read.notes)
+    except (timetable_ocr.OcrError, timetable_ocr.OcrUnavailable, binascii.Error, ValueError):
+        grid_notes = ["시간표 격자를 찾지 못해 AI 가 읽은 시각을 그대로 썼습니다. 시간을 확인해 주세요."]
     slots = tools.check_timetable_read(read, req.university)
     need = sum(1 for s in slots if s.issue)
     msg = (f"수업 {len(slots)}칸을 읽었어요." + (f" {need}칸은 확인이 필요해요." if need else "")
            + " 맞는지 확인한 뒤 시간표에 넣어 주세요.") if slots else "수업 칸을 찾지 못했습니다. 직접 입력해 주세요."
-    notes = [*read.notes, "이 서버에는 사진 인식(OCR)이 없어 Google Gemini 로 읽었습니다. 사진은 저장하지 않습니다."]
+    notes = [*read.notes, *grid_notes,
+             "이 서버에는 글자 인식(OCR)이 없어 과목·강의실 글자를 Google Gemini 로 읽었습니다. 사진은 저장하지 않습니다."]
     return TimetableImageResponse(status="ok", message=msg, slots=slots, notes=notes, buildings=res.buildings)

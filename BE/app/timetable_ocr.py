@@ -114,8 +114,17 @@ def _find_columns(lines, np) -> list[tuple[int, int]]:
         raise OcrError("세로 격자선을 찾지 못했습니다.")
     spans = [(a, b) for a, b in zip(xs, xs[1:])]
     widest = max(b - a for a, b in spans)
-    # 왼쪽 시각 눈금 열은 요일 열보다 좁다
-    cols = [(a, b) for a, b in spans if b - a >= widest * 0.7]
+    # 보통 열 너비: 넓은 칸들의 중앙값. 세로선이 긴 수업 칸에 가려지면 두 열이 한 칸(2배 너비)으로 보이므로
+    # 보통 너비의 정수배인 칸은 나눈다 (2026-11-16 과기대 캡처: 수요일 선이 가려짐).
+    # 왼쪽 시각 눈금 열·얇은 틈은 보통 너비에 못 미쳐 빠진다
+    wide = sorted(b - a for a, b in spans if b - a >= widest * 0.4)
+    base = wide[len(wide) // 2]
+    cols: list[tuple[int, int]] = []
+    for a, b in spans:
+        k = round((b - a) / base)
+        if k >= 1 and abs((b - a) - k * base) <= base * 0.12 * k:
+            step = (b - a) / k
+            cols += [(round(a + i * step), round(a + (i + 1) * step)) for i in range(k)]
     if not 1 <= len(cols) <= 7:
         raise OcrError(f"요일 열 수가 이상합니다 ({len(cols)}개).")
     return cols
@@ -310,3 +319,109 @@ def read_timetable_image(data: bytes) -> OcrResult:
     if any(not s.building_text for s in out):
         notes.append("강의실 표기가 없는 칸은 개인 일정일 수 있어 건물을 비워 두었습니다.")
     return OcrResult(slots=out, notes=notes)
+
+
+# ---------------------------------------------------------------- OpenCV 칸 위치 + AI 글자 (2026-11-16 A안)
+# 배포 서버(무료, 메모리 512MB)에는 EasyOCR(torch)를 못 넣지만 OpenCV 는 넣을 수 있다.
+# AI(Gemini)는 칸 시각을 30분·1시간 단위로 어림해서 75분 수업 등을 틀리게 읽는다 (11-16 실측).
+# → 칸의 위치·시각은 OpenCV 격자로 재고, 과목·강의실 글자와 요일만 AI 결과에서 가져와 짝짓는다.
+#   첫 가로선의 시각(몇 시)과 첫 열의 요일은 AI 칸들과 가장 잘 맞는 값으로 정한다 (EasyOCR 로 읽던 부분).
+
+_MAX_COST = 240  # 칸 하나가 맞지 않을 때의 벌점 (분)
+
+
+def grid_blocks(data: bytes) -> list[list[tuple[float, float]]]:
+    """OpenCV 만으로 열마다 색칠된 칸의 (시작, 끝) — 첫 가로선부터 몇 시간 뒤인지 (실수). 글자는 읽지 않는다."""
+    cv2, np = _import_cv()
+    img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise OcrError("이미지를 열 수 없습니다.")
+    lines = _line_mask(img, np)
+    cols = _find_columns(lines, np)
+    hour_lines = _find_hour_lines(lines, cols, np)
+    first = hour_lines[0]
+    pitch = (hour_lines[-1] - first) / (len(hour_lines) - 1)
+    return [[((y0 - first) / pitch, (y1 - first) / pitch)
+             for y0, y1 in _blocks_in_column(img, col, first, hour_lines[-1], int(pitch * 0.2), np)]
+            for col in cols]
+
+
+def _hm(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _snap(minutes: float) -> int:
+    return max(0, min(round(minutes / _SNAP_MIN) * _SNAP_MIN, 23 * 60 + 55))
+
+
+def align_with_grid(blocks: list[list[tuple[float, float]]], slots: list[dict]) -> tuple[list[dict], list[str]]:
+    """AI 칸(요일·대략 시각·글자) → OpenCV 칸 시각으로 바꾼 칸 목록 + 안내.
+
+    slots: [{day, start, end, building_text, course}] (AI 결과). 맞출 수 없으면 AI 시각 그대로 두고 안내한다.
+    """
+    notes: list[str] = []
+    ai = [s for s in slots if s.get("day") in DAY_ORDER and re.fullmatch(r"\d{1,2}:\d{2}", s.get("start", ""))
+          and re.fullmatch(r"\d{1,2}:\d{2}", s.get("end", ""))]
+    n = len(blocks)
+    if not ai or n == 0 or not any(blocks):
+        return slots, ["칸 위치를 찾지 못해 AI 가 읽은 시각을 그대로 썼습니다. 시간을 확인해 주세요."]
+
+    def block_min(c: int, b: tuple[float, float], start_hour: int) -> tuple[int, int]:
+        return _snap((start_hour + b[0]) * 60), _snap((start_hour + b[1]) * 60)
+
+    # 첫 열의 요일(d0)과 첫 가로선 시각(h0): AI 칸과의 시작·끝 차이 합이 가장 작은 값
+    best: tuple[float, int, int] | None = None
+    for d0 in range(0, len(DAY_ORDER) - n + 1):
+        for h0 in range(5, 15):
+            cost = 0.0
+            for s in ai:
+                c = DAY_ORDER.index(s["day"]) - d0
+                if not 0 <= c < n or not blocks[c]:
+                    cost += _MAX_COST
+                    continue
+                a, e = _hm(s["start"]), _hm(s["end"])
+                cost += min(min(abs(bs - a) + abs(be - e), _MAX_COST)
+                            for bs, be in (block_min(c, b, h0) for b in blocks[c]))
+            if best is None or cost < best[0]:
+                best = (cost, d0, h0)
+    assert best is not None
+    cost, d0, h0 = best
+    if cost / len(ai) > 90:  # 평균 1시간 반 넘게 어긋나면 격자를 믿지 않는다
+        return slots, ["칸 위치와 AI 결과가 맞지 않아 AI 가 읽은 시각을 그대로 썼습니다. 시간을 확인해 주세요."]
+
+    out: list[dict] = []
+    used: set[int] = set()
+    for c, col in enumerate(blocks):
+        day = DAY_ORDER[d0 + c]
+        cand = [(i, s) for i, s in enumerate(ai) if s["day"] == day]
+        if len(cand) == len(col):
+            # 칸 수가 같으면 시간 순서대로 짝짓는다 (AI 시각이 크게 어긋나도 순서는 맞다, 11-16 과기대 캡처)
+            for b, (i, src) in zip(col, sorted(cand, key=lambda x: _hm(x[1]["start"]))):
+                bs, be = block_min(c, b, h0)
+                used.add(i)
+                out.append({"day": day, "start": f"{bs // 60:02d}:{bs % 60:02d}", "end": f"{be // 60:02d}:{be % 60:02d}",
+                            "building_text": src.get("building_text", ""), "course": src.get("course")})
+            continue
+        for b in col:
+            bs, be = block_min(c, b, h0)
+            # 겹치는 시간이 가장 긴 AI 칸 (없으면 가장 가까운 칸, 2시간 넘게 떨어지면 글자 없음)
+            def score(item):
+                a, e = _hm(item[1]["start"]), _hm(item[1]["end"])
+                overlap = min(be, e) - max(bs, a)
+                return (overlap, -(abs(bs - a) + abs(be - e)))
+            pick = max(cand, key=score, default=None)
+            if pick is not None and score(pick)[0] < 0 and -score(pick)[1] > 120:
+                pick = None
+            if pick is not None:
+                used.add(pick[0])
+            src = pick[1] if pick else {}
+            out.append({"day": day, "start": f"{bs // 60:02d}:{bs % 60:02d}", "end": f"{be // 60:02d}:{be % 60:02d}",
+                        "building_text": src.get("building_text", ""), "course": src.get("course")})
+    missed = [s for i, s in enumerate(ai) if i not in used]
+    if missed:
+        notes.append(f"칸 위치를 찾지 못한 {len(missed)}칸은 AI 가 읽은 시각을 그대로 썼습니다. 시간을 확인해 주세요.")
+        out += [dict(s) for s in missed]
+    out.sort(key=lambda s: (DAY_ORDER.index(s["day"]), s["start"]))
+    notes.append("칸의 요일·시각은 시간표 격자 위치로 계산했고, 과목·강의실 글자는 AI 로 읽었습니다.")
+    return out, notes

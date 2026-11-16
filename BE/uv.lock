@@ -522,6 +522,7 @@ dependencies = [
     { name = "langchain-google-genai" },
     { name = "langgraph" },
     { name = "openai" },
+    { name = "opencv-python-headless" },
     { name = "python-dotenv" },
     { name = "uvicorn" },
 ]
@@ -543,6 +544,7 @@ requires-dist = [
     { name = "langchain-google-genai", specifier = ">=4.4.3" },
     { name = "langgraph", specifier = ">=1.2.20" },
     { name = "openai", specifier = ">=3.46.0" },
+    { name = "opencv-python-headless", specifier = ">=5.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
