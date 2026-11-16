@@ -1,5 +1,12 @@
 # home_poc — AI 주거 의사결정 서비스
 
+## 🔗 주요 링크
+[서비스](https://home-poc-frontend.vercel.app) 
+[Render](https://home-poc.onrender.com) 
+[Figma](https://www.figma.com/design/LXbwlJ28cNfN13spFXFybO/AI-%EC%A3%BC%EA%B1%B0-%EC%B6%94%EC%B2%9C-%EC%84%9C%EB%B9%84%EC%8A%A4-%E2%80%94-UI-%EC%B4%88%EB%B3%B8-v2) 
+[포스터](https://www.figma.com/design/x5yQDYdoaPdXt4U9lZ4j3N/%EA%B2%B0-%E2%80%94-%ED%95%B4%EC%BB%A4%ED%86%A4-A0-%ED%8F%AC%EC%8A%A4%ED%84%B0?node-id=0-1)
+
+
 대학생이 **생활 동선(통학·시간표)과 실제 주거비**를 기준으로 자취방을 고르도록 돕는 서비스입니다.
 대상 대학: 이화여대 · 고려대 · 서강대 · 서울과기대
 
