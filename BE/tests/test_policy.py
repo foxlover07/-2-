@@ -140,7 +140,7 @@ def test_policy_api_response_field(monkeypatch):
     from app.routers import agent as agent_router
 
     monkeypatch.setattr(pol, "load_policies", lambda: ITEMS)
-    llm = ScriptedLLM([TurnExtraction(intent="policy", policy_query="기숙사", changes=ProfileChanges())], ["정책을 찾았어요."])
+    llm = ScriptedLLM([TurnExtraction(intent="policy", policy_query="기숙사", policy_regions=["부산"], changes=ProfileChanges())], ["정책을 찾았어요."])
     monkeypatch.setattr(agent_router, "_provider_llm", lambda: llm)
     b = TestClient(app).post("/agent/chat", json={"session_id": "pol-1", "message": "기숙사 지원"}).json()
     assert b["status"] == "ok" and b["policy_results"]["items"][0]["policy_id"] == "C"
@@ -196,3 +196,17 @@ def test_contract_check_api():
     r = TestClient(app).get(f"/market/contract-check/{pid}")
     assert r.status_code == 200 and r.json()["phases"][0]["phase"] == "계약 전"
     assert TestClient(app).get("/market/contract-check/NOPE").status_code == 404
+
+
+def test_name_match_beats_long_description():
+    """설명문에 낱말이 많이 나오는 정책보다 이름이 맞는 정책이 앞 (2026-11-16 배포 확인에서 발견)."""
+    from app.policy import PolicyItem, search_policies
+
+    items = (
+        PolicyItem(policy_id="L", name="신혼부부 가구 주거비 지원사업", region="서울",
+                   summary="주거비 지원 " * 20 + "월세 지원 " * 10),
+        PolicyItem(policy_id="N", name="청년월세 지원", region="전국", summary="월 20만 원"),
+        PolicyItem(policy_id="D", name="청년월세 지원", region="전국", summary="중복 등록"),
+    )
+    r = search_policies("청년 월세 지원", regions=["서울"], items=items)
+    assert [i.policy_id for i in r.items] == ["N", "L"]  # 이름 맞는 것 먼저, 같은 이름은 하나

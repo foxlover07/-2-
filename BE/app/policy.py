@@ -211,10 +211,22 @@ def _words(query: str) -> list[str]:
     return list(dict.fromkeys(words))
 
 
-def _score(it: PolicyItem, words: list[str]) -> int:
-    head = f"{it.name} {' '.join(it.keywords)} {it.subcategory or ''}"
+def _score(it: PolicyItem, words: list[str], primary: list[str] | None = None) -> int:
+    """이름에 맞는 정책을 앞에 (2026-11-16: 설명문이 긴 정책이 낱말 반복으로 앞서던 문제).
+    낱말마다 '있는지'만 본다: 이름 5 · 키워드·중분류 2 · 설명·지원 내용 1. 사용자가 쓴 낱말(primary)은 동의어보다 2배.
+    낱말을 붙인 말(예: '청년월세')이 이름에 그대로 있으면 +10."""
+    name = it.name.replace(" ", "")
+    head = f"{' '.join(it.keywords)} {it.subcategory or ''}"
     body = f"{it.summary or ''} {it.support or ''}"
-    return sum(3 * head.count(w) + body.count(w) for w in words)
+    primary = primary or []
+    score = 0
+    for w in words:
+        s = 5 * (w in name) + 2 * (w in head) + (w in body)
+        score += s * (2 if w in primary else 1)
+    joined = "".join(primary)
+    if len(primary) >= 2 and joined in name:
+        score += 10
+    return score
 
 
 _REGION_SUFFIX = re.compile(r"(특별자치시|특별자치도|특별시|광역시)$")
@@ -252,10 +264,13 @@ def search_policies(query: str = "", region: str | None = None, limit: int = 5,
     if not items:
         return PolicyResult(available=False, query=query, kind=kind, regions=regions, notes=notes, reason=NO_DATA)
     words = _words(query)
+    primary = [w for w in (x.strip() for x in _SPLIT.split(query or "")) if len(w) >= 2]
     pool = [it for it in items if region_match(it.region, regions)]
-    ranked = sorted(pool, key=lambda it: (-_score(it, words), it.name)) if words else sorted(pool, key=lambda it: it.name)
+    ranked = sorted(pool, key=lambda it: (-_score(it, words, primary), it.name)) if words else sorted(pool, key=lambda it: it.name)
     if words:
-        ranked = [it for it in ranked if _score(it, words) > 0] or ranked
+        ranked = [it for it in ranked if _score(it, words, primary) > 0] or ranked
+    seen: set[str] = set()  # 같은 이름(기관만 다른 중복 등록)은 하나만
+    ranked = [it for it in ranked if not (it.name.replace(" ", "") in seen or seen.add(it.name.replace(" ", "")))]
     fetched = max((it.fetched_at for it in items if it.fetched_at), default=None)
     return PolicyResult(available=True, query=query, kind=kind, items=ranked[:limit], total_matched=len(ranked),
                         regions=regions, notes=notes, fetched_at=fetched, source=policy_source())

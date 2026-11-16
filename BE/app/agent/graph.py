@@ -326,8 +326,12 @@ def make_nodes(get_llm: Callable[[], AgentLLM], trace_sink: Callable[[dict[str, 
         elif kind == "compare" and len(ex.policy_names) >= 2:
             res = compare_policies(ex.policy_names)
         else:
-            res = search_policies(ex.policy_query or state["user_message"], regions=ex.policy_regions,
+            # 지역을 말하지 않으면 서비스 지역(4개 대학 모두 서울) + 전국 정책 (2026-11-16)
+            regions = ex.policy_regions or ["서울"]
+            res = search_policies(ex.policy_query or state["user_message"], regions=regions,
                                   kind="info" if kind == "compare" else kind)
+            if not ex.policy_regions:
+                res.notes.append("지역을 말씀하지 않아 서울과 전국 정책을 먼저 찾았어요. 다른 지역은 지역 이름을 함께 말해 주세요.")
         return {"policy": res.model_dump(mode="json")}
 
     def compare_previous(state: AgentState) -> AgentState:
